@@ -24,6 +24,9 @@ const HUMAN = {
   get_basic_info: "Looking at the project", get_tree_summary: "Reading the layers", get_children: "Reading the layers", get_node_info: "Reading a layer", get_selection: "Checking your selection", get_brand: "Reading the brand kit", get_guide: "Reading the guide",
   get_screenshot: "Checking the result", update_styles: "Changing styles", set_text_content: "Rewriting text", write_html: "Adding layers", set_attributes: "Updating a layer", duplicate_nodes: "Duplicating", delete_nodes: "Removing layers", rename_nodes: "Renaming layers",
   move_nodes: "Moving layers", reorder_nodes: "Changing layer order", group_nodes: "Grouping layers", ungroup_nodes: "Ungrouping", apply_style: "Applying a style", create_style: "Creating a style", create_component: "Making a component", create_instance: "Adding an instance", create_artboard: "Creating an artboard", set_brand: "Updating the brand kit", split_text_from_box: "Separating text", undo: "Undoing", export: "Exporting",
+  critique: "Reviewing the design", place_image: "Placing an image", insert_icon: "Adding an icon", search_icons: "Looking for icons", resize_to_formats: "Resizing to new formats",
+  make_variations: "Making variations", get_requests: "Reading your notes", resolve_request: "Finishing a note", leave_note: "Leaving you a note", set_link: "Setting a link",
+  use_template: "Adding a template", save_template: "Saving a template", list_templates: "Looking at templates", brand_from_url: "Reading a website's brand",
 };
 
 export function createAsk({ port, mcpPath, getDoc, broadcast }) {
@@ -31,15 +34,17 @@ export function createAsk({ port, mcpPath, getDoc, broadcast }) {
   const emit = (ev) => { if (run) run.events.push(ev); broadcast({ id: run && run.id, ...ev }); };
   const view = () => (run ? { id: run.id, running: run.running, prompt: run.prompt, events: run.events, canUndo: !!run.canUndo, started: run.started } : null);
 
-  function start({ prompt, selection = [] }) {
+  // tools: "images" also allows the Magnific image tools from the user's Claude connectors (remove background, upscale)
+  function start({ prompt, selection = [], tools }) {
     const doc = getDoc();
     if (run && run.running) throw new Error("Claude is still working on the last request.");
     const bin = findClaude();
     if (!bin) throw new Error("Claude Code isn't installed. Install it and sign in once by running `claude` in a terminal; Studio then uses your own login.");
     const names = selection.map((id) => { try { const n = doc.need(id).node; return `${id} (${doc.label(n)})`; } catch { return null; } }).filter(Boolean);
     const text = `${names.length ? `The user has selected: ${names.join(", ")}.\n` : ""}Request: ${String(prompt).trim()}`;
-    const cfg = JSON.stringify({ mcpServers: { studio: { command: process.execPath, args: [mcpPath], env: { STUDIO_PORT: String(port) } } } });
-    const args = ["-p", text, "--output-format", "stream-json", "--verbose", "--mcp-config", cfg, "--strict-mcp-config", "--allowedTools", "mcp__studio", "--tools", "", "--permission-mode", "dontAsk", "--append-system-prompt", SYSTEM, "--no-session-persistence"];
+    const cfg = JSON.stringify({ mcpServers: { studio: { command: process.execPath, args: [mcpPath], env: { STUDIO_PORT: String(port), STUDIO_SOURCE: "ask" } } } });
+    const images = tools === "images";
+    const args = ["-p", text, "--output-format", "stream-json", "--verbose", "--mcp-config", cfg, ...(images ? [] : ["--strict-mcp-config"]), "--allowedTools", images ? "mcp__studio,mcp__claude_ai_Magnific" : "mcp__studio", "--tools", "", "--permission-mode", "dontAsk", "--append-system-prompt", SYSTEM, "--no-session-persistence"];
     // Sonnet 5.5 at medium effort unless overridden (STUDIO_CLAUDE_MODEL / STUDIO_CLAUDE_EFFORT)
     args.push("--model", process.env.STUDIO_CLAUDE_MODEL || "claude-sonnet-5-5", "--effort", process.env.STUDIO_CLAUDE_EFFORT || "medium");
     run = { id: Math.random().toString(36).slice(2, 9), running: true, prompt: String(prompt).trim(), events: [], startDepth: doc.undoStack.length, started: Date.now(), canUndo: false };

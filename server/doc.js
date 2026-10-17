@@ -6,6 +6,7 @@ import { parse, HTMLElement, TextNode } from "node-html-parser";
 import { install as installDesignSystem, TEXT_PROPS } from "./design-system.js";
 import { install as installCanvasFeatures } from "./canvas-features.js";
 import { installFonts } from "./fonts.js";
+import { installExtras } from "./doc-extras.js";
 
 const VOID = new Set(["img", "br", "hr", "input"]);
 const INLINE = new Set(["span", "b", "i", "strong", "em", "a", "u", "small", "sup", "sub"]);
@@ -613,3 +614,4 @@ export function normStyle(obj) {
 installDesignSystem(Doc);
 installCanvasFeatures(Doc);
 installFonts(Doc);
+installExtras(Doc);

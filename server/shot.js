@@ -28,7 +28,8 @@ export async function closeBrowser() {
 }
 
 // type: png | jpeg | webp. nodeIds: render several elements of the same page (slices) and return an array of buffers.
-export async function screenshot(html, { nodeId, nodeIds, width = 600, scale = 1, type = "png", quality = 90 }) {
+// pad: extra px around the node; region: { x, y, width, height } inside the node (both in design px)
+export async function screenshot(html, { nodeId, nodeIds, width = 600, scale = 1, type = "png", quality = 90, pad = 0, region = null }) {
   const b = await getBrowser();
   const page = await b.newPage();
   try {
@@ -38,10 +39,37 @@ export async function screenshot(html, { nodeId, nodeIds, width = 600, scale = 1
     const shoot = async (id) => {
       const el = await page.$(`[data-node-id="${id}"]`);
       if (!el) throw new Error("Could not find that node on the page.");
-      return Buffer.from(await el.screenshot({ type, ...(type !== "png" ? { quality: Math.max(1, Math.min(100, Math.round(quality))) } : {}) }));
+      const q = type !== "png" ? { quality: Math.max(1, Math.min(100, Math.round(quality))) } : {};
+      if (pad || region) {
+        const bb = await el.boundingBox();
+        if (!bb) throw new Error("That node isn't visible (zero size or hidden).");
+        const size = await page.evaluate(() => ({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight }));
+        let clip = region ? { x: bb.x + region.x, y: bb.y + region.y, width: region.width, height: region.height } : { x: bb.x - pad, y: bb.y - pad, width: bb.width + pad * 2, height: bb.height + pad * 2 };
+        const x0 = Math.max(0, clip.x), y0 = Math.max(0, clip.y);
+        clip = { x: x0, y: y0, width: Math.max(1, Math.min(size.w, clip.x + clip.width) - x0), height: Math.max(1, Math.min(size.h, clip.y + clip.height) - y0) };
+        return Buffer.from(await page.screenshot({ type, ...q, clip, captureBeyondViewport: true }));
+      }
+      return Buffer.from(await el.screenshot({ type, ...q }));
     };
     if (nodeIds) { const out = []; for (const id of nodeIds) out.push(await shoot(id)); return out; }
     return await shoot(nodeId);
+  } finally {
+    await page.close();
+  }
+}
+
+// Load a page and run fn(arg) inside it (measurements for the design critique)
+export async function inspectPage(html, { width = 600, fn, arg }) {
+  const b = await getBrowser();
+  const page = await b.newPage();
+  try {
+    await page.setViewport({ width: Math.round(width), height: 900, deviceScaleFactor: 1 });
+    await page.setContent(html, { waitUntil: "networkidle0", timeout: 25000 });
+    await page.evaluate(() => document.fonts && document.fonts.ready);
+    // the whole design in the viewport, so hit-testing (what is under a text) works everywhere
+    const h = await page.evaluate(() => document.documentElement.scrollHeight);
+    if (h > 900) await page.setViewport({ width: Math.round(width), height: Math.min(h, 14000), deviceScaleFactor: 1 });
+    return await page.evaluate(fn, arg);
   } finally {
     await page.close();
   }

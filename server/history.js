@@ -6,7 +6,7 @@ import path from "node:path";
 const MAX_AUTO = 40;
 const dirOf = (doc) => path.join(doc.dir, "history");
 const fileOf = (doc, id) => { if (!/^[a-z0-9]+$/.test(String(id))) throw new Error("Unknown version."); return path.join(dirOf(doc), id + ".json"); };
-const readMeta = (f) => { try { const j = JSON.parse(fs.readFileSync(f, "utf8")); return { id: path.basename(f, ".json"), at: j.at, name: j.name || "", auto: !!j.auto, artboards: (j.state.artboards || []).length, layers: countNodes(j.state.artboards || []) }; } catch { return null; } };
+const readMeta = (f) => { try { const j = JSON.parse(fs.readFileSync(f, "utf8")); return { id: path.basename(f, ".json"), at: j.at, name: j.name || "", note: j.note || "", auto: !!j.auto, artboards: (j.state.artboards || []).length, layers: countNodes(j.state.artboards || []) }; } catch { return null; } };
 const countNodes = (list) => list.reduce((n, x) => n + 1 + countNodes(x.children || []), 0);
 
 export function listVersions(doc) {
@@ -14,12 +14,13 @@ export function listVersions(doc) {
   return fs.readdirSync(d).filter((f) => f.endsWith(".json")).map((f) => readMeta(path.join(d, f))).filter(Boolean).sort((a, b) => b.at - a.at);
 }
 
-export function saveVersion(doc, { name = "", auto = false } = {}) {
+// note: a label for automatic versions ("Before Claude's changes") that doesn't keep them from being pruned like a name does
+export function saveVersion(doc, { name = "", auto = false, note = "" } = {}) {
   if (!doc.state.artboards.length) throw new Error("Nothing to save yet.");
   doc.save();
   fs.mkdirSync(dirOf(doc), { recursive: true });
   let id = Date.now().toString(36); while (fs.existsSync(fileOf(doc, id))) id += "a";
-  fs.writeFileSync(fileOf(doc, id), JSON.stringify({ at: Date.now(), name: String(name).trim().slice(0, 80), auto, state: doc.state }));
+  fs.writeFileSync(fileOf(doc, id), JSON.stringify({ at: Date.now(), name: String(name).trim().slice(0, 80), auto, ...(note ? { note: String(note).slice(0, 80) } : {}), state: doc.state }));
   doc._histVersion = doc.version;
   if (auto) { const old = listVersions(doc).filter((v) => v.auto && !v.name); for (const v of old.slice(MAX_AUTO)) fs.rmSync(fileOf(doc, v.id), { force: true }); }
   return readMeta(fileOf(doc, id));

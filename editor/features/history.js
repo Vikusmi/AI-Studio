@@ -6,7 +6,7 @@ export function initHistory(ctx) {
   const close = () => { el?.remove(); el = null; };
   async function render() {
     const list = await op("historyList");
-    const rows = list.map((v) => `<div class="hrow" data-id="${v.id}"><div class="hmain"><b>${v.name ? esc(v.name) : v.auto ? "Automatic save" : "Saved version"}</b><span class="muted">${when(v.at)} · ${v.artboards} artboard${v.artboards === 1 ? "" : "s"}, ${v.layers} layers</span></div><button data-act="rename">Rename</button><button data-act="restore">Restore</button><button data-act="del" title="Delete">×</button></div>`).join("");
+    const rows = list.map((v) => `<div class="hrow" data-id="${v.id}"><div class="hmain"><b>${v.name ? esc(v.name) : v.note ? esc(v.note) : v.auto ? "Automatic save" : "Saved version"}</b><span class="muted">${when(v.at)} · ${v.artboards} artboard${v.artboards === 1 ? "" : "s"}, ${v.layers} layers</span></div><button data-act="rename">Rename</button><button data-act="restore">Restore</button><button data-act="del" title="Delete">×</button></div>`).join("");
     $("#h-list", el).innerHTML = rows || `<div class="muted" style="padding:14px 4px">No versions yet. Studio saves one automatically about every 10 minutes while you work; use “Save version” for a milestone.</div>`;
   }
   async function open() {
