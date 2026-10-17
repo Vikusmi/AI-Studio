@@ -1,4 +1,5 @@
 // Everything that turns an artboard into a file: email (html / zip / eml), and later images and PDFs.
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { emailPage } from "./email.js";
@@ -8,10 +9,12 @@ import { zip } from "./zip.js";
 const safe = (s, fallback = "design") => (String(s || fallback).replace(/[^\w\-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || fallback);
 export const fileBase = (node) => safe(node.name);
 
-// Rendering sections is the slow part of an email export, so renders are remembered until the document changes.
+// Rendering sections is the slow part of an email export, so renders are remembered until that part of the design changes
+// (keyed by its content, so edits to other artboards keep them).
 const cache = new Map();
+const fingerprint = (doc, node) => crypto.createHash("sha1").update(JSON.stringify(node)).update(JSON.stringify(doc.state.fonts || [])).digest("hex");
 function cached(doc, node, key, make) {
-  const k = `${doc.dir}|${node.id}|${doc.version}|${key}`;
+  const k = `${doc.dir}|${node.id}|${fingerprint(doc, node)}|${key}`;
   if (cache.has(k)) return cache.get(k);
   const p = make();
   cache.set(k, p);

@@ -7,7 +7,11 @@ import { initTips } from "./features/tips.js";
 import { initAsk } from "./features/ask.js";
 import { initPen } from "./features/pen.js";
 import { spacingSnap } from "./features/spacing.js";
+import { initClaude } from "./features/claude.js";
+import { initNotes } from "./features/notes.js";
+import { initSelbar } from "./features/selbar.js";
 const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const world = $("#world"), overlay = $("#overlay"), viewport = $("#viewport"), layersList = $("#layers-list"), inspector = $("#inspector"), pop = $("#pop");
 
 let state = { artboards: [] };
@@ -17,6 +21,7 @@ let view = { x: 80, y: 90, z: 0.6 };
 let editing = null;       // { id, el, original }
 let drag = null;
 let guides = null, pen = null;   // features that live in their own files (set up once the editor is ready)
+let notes = null, claude = null, selbar = null;
 let hoverId = null;
 let spaceDown = false;
 let altDown = false;
@@ -54,7 +59,9 @@ es.addEventListener("doc", (e) => {
   state = d.state; canUndo = d.canUndo; canRedo = d.canRedo;
   if (d.project) { project = d.project; $("#proj-name").textContent = project.name; document.title = project.name + " — Studio"; }
   selection = selection.filter((id) => find(id));
-  refresh();
+  if (d.notes && notes) notes.set(d.notes);
+  if (d.run !== undefined && claude) claude.setRun(d.run);
+  refresh({ server: !switched });
   if (switched) {
     // each project remembers its own view; a new one starts fitted
     let v = null; try { v = JSON.parse(localStorage.getItem("studio-view:" + project.id)); } catch {}
@@ -116,17 +123,32 @@ function renderNode(n) {
   for (const c of n.children || []) el.appendChild(renderNode(c));
   return el;
 }
-function renderWorld() {
-  world.textContent = "";
+// Artboards are rebuilt only when they changed: when Claude edits one artboard of twenty, the other nineteen stay as they are.
+// partial = false rebuilds everything (local resets after a cancelled drag, a project switch).
+const abCache = new Map(); // artboard id -> { key, wrap }
+function renderWorld(partial = false) {
+  if (!partial) { world.textContent = ""; abCache.clear(); }
+  const seen = new Set();
+  let prev = null;
   for (const ab of state.artboards) {
-    const w = document.createElement("div");
-    w.className = "abw";
-    w.dataset.abw = ab.id;
-    w.style.left = ab.x + "px";
-    w.style.top = ab.y + "px";
-    w.appendChild(renderNode(ab));
-    world.appendChild(w);
+    seen.add(ab.id);
+    const key = JSON.stringify(ab);
+    let c = abCache.get(ab.id);
+    if (!c || c.key !== key) {
+      const w = document.createElement("div");
+      w.className = "abw";
+      w.dataset.abw = ab.id;
+      w.style.left = ab.x + "px";
+      w.style.top = ab.y + "px";
+      w.appendChild(renderNode(ab));
+      if (c && c.wrap.isConnected) c.wrap.replaceWith(w);
+      c = { key, wrap: w }; abCache.set(ab.id, c);
+    }
+    const want = prev ? prev.nextSibling : world.firstChild;
+    if (c.wrap !== want) world.insertBefore(c.wrap, want);
+    prev = c.wrap;
   }
+  for (const [id, c] of abCache) if (!seen.has(id)) { c.wrap.remove(); abCache.delete(id); }
   $("#empty").hidden = state.artboards.length > 0;
 }
 // single-weight display fonts need a bare family name; variable ones get their weight range (and italics where they have them)
@@ -159,11 +181,11 @@ function loadFonts() {
 }
 
 let pendingRefresh = false;
-function refresh() {
+function refresh({ server = false } = {}) {
   if (editing) return;
   // never rebuild the DOM under a live drag; catch up when it ends
   if (drag && drag.moved && (drag.kind === "move" || drag.kind === "resize")) { pendingRefresh = true; return; }
-  renderWorld();
+  renderWorld(server);
   loadFonts();
   applyView();
   renderLayers();
@@ -274,7 +296,7 @@ function drawOverlay() {
     const b = document.createElement("div"); b.className = "sel-box" + (cropping && cropping.id === id ? " crop" : "");
     Object.assign(b.style, { left: r.x + "px", top: r.y + "px", width: r.w + "px", height: r.h + "px" });
     overlay.appendChild(b);
-    if (selection.length === 1 && !drag?.indicator) {
+    if (selection.length === 1 && !drag?.indicator && !n.locked) {
       const abs = n.style && n.style.position === "absolute";
       // the whole blue edge is grabbable, not just the dots
       for (const h of n.artboard ? ["e", "s"] : ["n", "s", "e", "w"]) {
@@ -293,7 +315,7 @@ function drawOverlay() {
         overlay.appendChild(d);
       }
     }
-    if (selection.length === 1 && !n.artboard && !drag?.indicator && !(drag && drag.kind === "move" && drag.moved)) {
+    if (selection.length === 1 && !n.artboard && !n.locked && !drag?.indicator && !(drag && drag.kind === "move" && drag.moved)) {
       const rb = document.createElement("div"); rb.className = "rot"; rb.title = "Rotate (⇧ snaps to 15°)";
       Object.assign(rb.style, { left: r.x + r.w / 2 + "px", top: r.y - 28 + "px" });
       overlay.appendChild(rb);
@@ -319,7 +341,9 @@ function drawOverlay() {
   }
   if (pen) pen.drawOverlay(overlay);
   if (guides) guides.draw();
+  for (const fn of overlayHooks) fn();
 }
+const overlayHooks = []; // features with their own persistent layers above the canvas (Claude's highlights, notes, the selection bar)
 
 // ---------- selection ----------
 let selTimer;
@@ -345,6 +369,10 @@ function select(ids, { scroll = true } = {}) {
 function pickFrom(t) {
   let pick = t;
   for (let x = t; x && world.contains(x); x = x.parentElement && x.parentElement.closest("[data-id]")) if (x.dataset.group && !entered.has(x.dataset.id)) pick = x;
+  // locked layers (and everything inside them) can't be picked on the canvas: the click goes to what holds them
+  let top = null;
+  for (let x = pick; x && world.contains(x); x = x.parentElement && x.parentElement.closest("[data-id]")) { const n = nodeOf(x.dataset.id); if (n && n.locked && !n.artboard) top = x; }
+  if (top) { const up = top.parentElement && top.parentElement.closest("[data-id]"); return up && world.contains(up) ? up.dataset.id : null; }
   return pick.dataset.id;
 }
 function targetId(e) { const t = e.target.closest && e.target.closest("[data-id]"); return t && world.contains(t) ? pickFrom(t) : null; }
@@ -405,6 +433,7 @@ viewport.addEventListener("pointerdown", (e) => {
   if (e.shiftKey) select(selection.includes(id) ? selection.filter((s) => s !== id) : [...selection, id]);
   else if (!selection.includes(id)) select([id]);
   const n = nodeOf(id);
+  if (n.locked) return;
   // pressing on an artboard's background: box-select inside it
   if (n.artboard) { drag = { kind: "marquee", scope: id, base: e.shiftKey ? [...selection] : [], sx: e.clientX, sy: e.clientY, moved: false }; return; }
   // a layer inside an auto-layout frame is reordered, not freely placed (the frame keeps laying its children out)
@@ -536,7 +565,7 @@ viewport.addEventListener("pointermove", (e) => {
     const vr = viewport.getBoundingClientRect();
     const b = { l: Math.min(drag.sx, e.clientX), t: Math.min(drag.sy, e.clientY), r: Math.max(drag.sx, e.clientX), b: Math.max(drag.sy, e.clientY) };
     const cands = drag.scope ? [...elFor(drag.scope).children].filter((c) => c.dataset && c.dataset.id) : state.artboards.map((a) => elFor(a.id)).filter(Boolean);
-    const hits = cands.filter((c) => { const r = c.getBoundingClientRect(); return r.left < b.r && r.right > b.l && r.top < b.b && r.bottom > b.t && getComputedStyle(c).display !== "none"; }).map((c) => c.dataset.id);
+    const hits = cands.filter((c) => { const r = c.getBoundingClientRect(); return !nodeOf(c.dataset.id)?.locked && r.left < b.r && r.right > b.l && r.top < b.b && r.bottom > b.t && getComputedStyle(c).display !== "none"; }).map((c) => c.dataset.id);
     const next = [...new Set([...drag.base, ...hits])];
     if (next.join() !== selection.join()) select(next, { scroll: false });
     const ind = document.createElement("div"); ind.className = "marquee";
@@ -852,10 +881,11 @@ addEventListener("keydown", (e) => {
   if (mod && e.shiftKey && e.key.toLowerCase() === "h") { e.preventDefault(); return goHome(); }
   if (mod && e.shiftKey && e.key.toLowerCase() === "r") { e.preventDefault(); return guides.setRulers(!guides.rulersOn()); }
   if (mod && e.shiftKey && e.key.toLowerCase() === "e") { e.preventDefault(); return exporter.open(); }
-  if (mod && !e.shiftKey && e.key.toLowerCase() === "k") { e.preventDefault(); return ask.open(); }
+  if (mod && !e.shiftKey && e.key.toLowerCase() === "k") { e.preventDefault(); return selection.length ? selbar.edit() : ask.open(); }
   if (mod && (e.key === "\\" || e.code === "Backslash")) { e.preventDefault(); return toggleAllPanels(); }
   if (mod && e.altKey && e.code === "KeyE") { e.preventDefault(); return openPreview(); }
   if (!mod && !e.altKey && e.key.toLowerCase() === "i") { e.preventDefault(); return $("#btn-add-image").click(); }
+  if (!mod && !e.altKey && e.key.toLowerCase() === "n" && selection.length) { e.preventDefault(); return notes.compose(selection); }
   if (mod && e.key.toLowerCase() === "z") { e.preventDefault(); op(e.shiftKey ? "redo" : "undo"); }
   else if (mod && e.key.toLowerCase() === "d") { e.preventDefault(); if (selection.length) op("duplicate", { nodeIds: selection }).then((r) => select(r.map((x) => x.id))); }
   else if (mod && e.key.toLowerCase() === "g") { e.preventDefault(); if (e.shiftKey) ungroupSel(); else groupSel(); }
@@ -869,7 +899,7 @@ addEventListener("keydown", (e) => {
   else if (e.key === "ArrowUp" && e.altKey && selection.length) { const r = find(selection[0]); if (r && r.parent) select([r.parent.id]); }
   else if (e.key.startsWith("Arrow") && selection.length) {
     const step = e.shiftKey ? 10 : 1, dx = { ArrowLeft: -step, ArrowRight: step }[e.key] || 0, dy = { ArrowUp: -step, ArrowDown: step }[e.key] || 0;
-    let ids = selection.filter((id) => nodeOf(id) && !nodeOf(id).artboard && elFor(id));
+    let ids = selection.filter((id) => nodeOf(id) && !nodeOf(id).artboard && !nodeOf(id).locked && elFor(id));
     if (ids.some(inAuto)) { ids = ids.filter((id) => !inAuto(id)); toast("Layers in an auto-layout frame are positioned by the frame (gap, padding, alignment)."); }
     for (const id of selection) { const n = nodeOf(id); if (n && n.artboard) { op("moveArtboard", { nodeId: id, x: n.x + dx, y: n.y + dy }); e.preventDefault(); } }
     if (!ids.length) return;
@@ -1242,6 +1272,14 @@ $("#btn-add-artboard").onclick = (e) => {
   };
   $("#p-ok").onclick = ok;
   pop.onkeydown = (ev) => { if (ev.key === "Enter") ok(); if (ev.key === "Escape") close(); };
+  // saved templates, when there are any
+  op("listTemplates").then((ts) => {
+    if (!ts.length || pop.hidden || !$("#p-name")) return;
+    const box = document.createElement("div"); box.className = "f";
+    box.innerHTML = `<label>Or start from a template</label><div class="tpl-list">${ts.slice(0, 8).map((t) => `<button data-tpl="${esc(t.id)}"><b>${esc(t.name)}</b><span class="muted">${t.width}×${t.height || "auto"}</span></button>`).join("")}</div>`;
+    pop.insertBefore(box, pop.lastElementChild);
+    box.onclick = async (ev) => { const b = ev.target.closest("[data-tpl]"); if (!b) return; close(); const r = await op("useTemplate", { templateId: b.dataset.tpl }); select([r.id]); setTimeout(() => fit([r.id]), 60); };
+  }).catch(() => {});
 };
 addEventListener("pointerdown", (e) => {
   if (!pop.hidden && !pop.contains(e.target) && !e.target.closest("#btn-add-artboard") && !e.target.closest(".needs-pop")) pop.hidden = true;
@@ -1339,6 +1377,9 @@ function canvasMenu(x, y, id) {
   if (n.artboard) return openMenu(x, y, [
     ["Rename", () => renameArtboard(id)], ["Duplicate", () => op("duplicate", { nodeIds: [id] }).then((r) => select(r.map((x) => x.id))), { key: "⌘D" }],
     ["Paste inside", () => clip && pasteNodes(clip.nodes, clip.parents), { key: "⌘V", disabled: !clip }], "-",
+    ["Note for Claude…", () => notes.compose([id]), { key: "N" }], ["Variations…", () => selbar.variations([id])], ["Review design", () => selbar.review(id)],
+    ["Resize to formats…", () => selbar.resize(id)], ["Save as template…", () => selbar.saveTemplate(id)],
+    ...(n.variant ? [["Use this variation", () => op("pickVariant", { nodeId: id })], ["Discard variations", () => op("discardVariants", { set: n.variant.set })]] : []), "-",
     ["Preview as email…", () => openPreview(id), { key: "⌥⌘E" }],
     ["Export PNG", () => $("#btn-png").click()], ["Download HTML", () => $("#btn-html").click()], ["Present from here", () => present()], "-",
     ["Zoom to artboard", () => fit([id])], "-",
@@ -1351,7 +1392,8 @@ function canvasMenu(x, y, id) {
     ["Duplicate", () => op("duplicate", { nodeIds: selection }).then((r) => select(r.map((x) => x.id))), { key: "⌘D" }],
     ["Delete", () => op("remove", { nodeIds: selection }), { key: "⌫", danger: true }], "-",
   ];
-  if (n.tag === "img" && !many) items.push(["Crop image", () => startCrop(id)], ["Replace image…", () => pickImage((src) => op("setAttrs", { nodeId: id, attrs: { src } }))], "-");
+  items.push(["Note for Claude…", () => notes.compose(selection), { key: "N" }], ["Variations…", () => selbar.variations(selection)], "-");
+  if ((n.tag === "img" || n.crop) && !many) items.push(["Crop image", () => startCrop(id)], ["Replace image…", () => pickImage((src) => op("setAttrs", { nodeId: id, attrs: { src } }))], ["Remove background (Claude)", () => selbar.imageJob(id, "remove-bg")], ["Upscale 2× (Claude)", () => selbar.imageJob(id, "upscale")], "-");
   if (isTextLeaf(n) && !many) items.push(["Edit text", () => startEdit(id), { key: "↵" }], "-");
   items.push(
     ["Bring to front", () => reorder("front"), { key: "⇧⌘]" }], ["Bring forward", () => reorder("forward"), { key: "⌘]" }],
@@ -1362,6 +1404,7 @@ function canvasMenu(x, y, id) {
     ["Ungroup", () => ungroupSel(), { key: "⇧⌘G", disabled: !selection.some((sid) => (nodeOf(sid)?.children || []).some((c) => c.tag !== "#text")) }],
     ...(canSplit(n) && !many ? [["Separate text from box", () => splitSel()]] : []),
     [n.hidden ? "Show" : "Hide", () => selection.forEach((sid) => op("setHidden", { nodeId: sid, hidden: !nodeOf(sid).hidden }))],
+    [n.locked ? "Unlock" : "Lock", () => op("setLocked", { nodeIds: selection, locked: !n.locked })],
     ["Rename", () => renameLayer(id), { disabled: many }],
     ["Select parent", () => { const r = find(id); if (r && r.parent) select([r.parent.id]); }, { key: "⌥↑" }],
   );
@@ -1571,7 +1614,41 @@ const NEW_KINDS = [
   ["Email", 600, null], ["Display ad", 300, 250], ["YouTube thumbnail", 1280, 720], ["A4 poster", 794, 1123],
 ];
 const ago = (t) => { const s = (Date.now() - t) / 1000; if (s < 60) return "just now"; if (s < 3600) return Math.floor(s / 60) + " min ago"; if (s < 86400) return Math.floor(s / 3600) + " h ago"; if (s < 86400 * 30) return Math.floor(s / 86400) + " days ago"; return new Date(t).toLocaleDateString(); };
+// things to say in the Claude chat (click copies them)
+const TRY = [
+  ["Social post", "Create a 1080×1080 Instagram post in Studio announcing our summer sale. Use the brand kit, then review it and fix what you find."],
+  ["Brand → ads", "Read the brand from example.com into a new Studio project, then make a story, a post and three ad sizes."],
+  ["Email flow", "Design a 5-email welcome flow in Studio, one artboard per email, 600px wide."],
+  ["My notes", "Do my notes in Studio."],
+];
+let homeView = "home", kindFilter = "All", homeBusy = false;
+const thumbHtml = (src, cover, W = 260, H = 170) => {
+  if (!cover) return `<div class="empty-thumb">Empty</div>`;
+  const w = cover.width, h = cover.height || Math.round(w * 1.3), k = Math.min(W / w, H / h);
+  return `<iframe tabindex="-1" loading="lazy" src="${src}" style="width:${w}px;height:${h}px;transform:scale(${k});left:calc(50% - ${(w * k) / 2}px);top:${(H - h * k) / 2}px"></iframe>`;
+};
+function setHomeView(v) {
+  homeView = v;
+  $("#home-main").hidden = v !== "home"; $("#templates-view").hidden = v !== "templates"; $("#trash-view").hidden = v !== "trash";
+  $("#home-search").hidden = v !== "home";
+  document.querySelectorAll("[data-hnav]").forEach((b) => b.classList.toggle("on", b.dataset.hnav === v));
+  $("#btn-trash").classList.toggle("on", v === "trash");
+  if (v === "trash") renderTrash(); else if (v === "templates") renderTemplates(); else renderHome();
+}
+document.querySelectorAll("[data-hnav]").forEach((b) => (b.onclick = () => setHomeView(b.dataset.hnav)));
+const mcpCommand = (root) => `claude mcp add ai-studio -- node "${root}/server/mcp.js"`;
+function heroStatus(con, list) {
+  const waiting = list.reduce((n, p) => n + (p.notes || 0), 0);
+  const notesPill = waiting ? `<span class="pill notes"><i></i>${waiting} note${waiting === 1 ? "" : "s"} waiting for Claude</span>` : "";
+  if (con && (con.hello || con.configured)) {
+    const seen = con.hello ? `last seen ${ago(con.hello.at)}` : "ready when you start a chat";
+    return `<span class="pill ok"><i></i>Claude Code connected</span><span class="pill">${seen}</span>${notesPill}`;
+  }
+  const cmd = mcpCommand(con ? con.root : "/path/to/studio");
+  return `<div class="connect"><b>Connect Claude Code</b><span>Run this once in a terminal, then ask Claude to design something.</span><div class="cmd"><code>${esc(cmd)}</code><button data-copy="${esc(cmd)}">Copy</button></div></div>${notesPill}`;
+}
 async function renderHome() {
+  if (homeView !== "home") return;
   const grid = $("#new-grid");
   if (!grid.children.length) {
     grid.innerHTML = NEW_KINDS.map(([name, w, h], i) => {
@@ -1585,20 +1662,120 @@ async function renderHome() {
       await op("createProject", { name: name === "Blank canvas" ? "Untitled" : name, artboard: w ? { name, width: w, ...(h ? { height: h } : {}) } : null });
       openEditor(true);
     };
+    $("#try-list").innerHTML = TRY.map(([t, p]) => `<button class="try" data-copy="${esc(p)}"><b>${esc(t)}</b><span>${esc(p)}</span></button>`).join("");
   }
-  const list = await op("projects");
+  const [list, act, tpls, con] = await Promise.all([op("projects"), op("activity").catch(() => []), op("listTemplates").catch(() => []), op("connection").catch(() => null)]);
+  $("#hero-status").innerHTML = heroStatus(con, list);
+  // Claude's recent work
+  const acts = act.filter((a) => list.some((p) => p.id === a.projectId)).slice(0, 5);
+  $("#activity-wrap").hidden = !acts.length;
+  $("#activity").innerHTML = acts.map((a) => `<div class="arow" data-pid="${esc(a.projectId)}"><span class="amark">✦</span><div class="amain"><b>${esc(a.projectName)}</b><span class="muted">${esc((a.labels || []).join(" · "))}${a.ops ? ` · ${a.ops} change${a.ops === 1 ? "" : "s"}` : ""}</span></div><span class="muted">${ago(a.lastAt)}</span><span class="astat ${a.status}">${a.status === "open" ? "Waiting for you" : a.status === "kept" ? "Kept" : "Undone"}</span><button data-open-p>Open</button></div>`).join("");
+  // templates
+  $("#tpl-wrap").hidden = !tpls.length;
+  $("#tpl-grid").innerHTML = tpls.slice(0, 4).map(tplCard).join("");
+  // projects, with a filter by kind
+  const kinds = ["All", ...new Set(list.map((p) => p.kind).filter((k) => k && k !== "Empty"))];
+  if (!kinds.includes(kindFilter)) kindFilter = "All";
+  $("#kind-filter").innerHTML = kinds.length > 2 ? kinds.map((k) => `<button data-kind="${esc(k)}" class="${k === kindFilter ? "on" : ""}">${esc(k)}</button>`).join("") : "";
   const q = $("#home-search").value.trim().toLowerCase();
-  const shown = list.filter((p) => !q || p.name.toLowerCase().includes(q));
+  const shown = list.filter((p) => (!q || p.name.toLowerCase().includes(q)) && (kindFilter === "All" || p.kind === kindFilter));
   $("#proj-grid").innerHTML = shown.map((p) => {
-    let thumb = `<div class="empty-thumb">Empty</div>`;
-    if (p.cover) {
-      const W = 260, H = 170, w = p.cover.width, h = p.cover.height || Math.round(w * 1.3), k = Math.min(W / w, H / h);
-      thumb = `<iframe tabindex="-1" loading="lazy" src="/api/projects/${p.id}/preview?v=${Math.round(p.updated)}" style="width:${w}px;height:${h}px;transform:scale(${k});left:calc(50% - ${(w * k) / 2}px);top:${(H - h * k) / 2}px"></iframe>`;
-    }
-    return `<div class="pcard${p.current ? " current" : ""}" data-pid="${p.id}"><div class="pthumb">${thumb}</div><div class="pmeta"><div><b class="pname">${esc(p.name)}</b><span>Edited ${ago(p.updated)} · ${p.artboards} artboard${p.artboards === 1 ? "" : "s"}</span></div><button class="more" title="More">•••</button></div></div>`;
-  }).join("") || `<p class="muted">${q ? "No project matches." : "No projects yet: start one above."}</p>`;
+    const badges = `${p.kind && p.kind !== "Empty" ? `<span class="pbadge">${esc(p.kind)}</span>` : ""}${p.notes ? `<span class="pbadge notes">${p.notes} note${p.notes === 1 ? "" : "s"}</span>` : ""}`;
+    const claudeLine = p.claudeAt && Date.now() - p.claudeAt < 86400000 ? ` · <span class="by-claude">✦ Claude ${ago(p.claudeAt)}</span>` : "";
+    return `<div class="pcard${p.current ? " current" : ""}" data-pid="${p.id}"><div class="pthumb">${thumbHtml(`/api/projects/${p.id}/preview?v=${Math.round(p.updated)}`, p.cover)}<div class="pbadges">${badges}</div></div><div class="pmeta"><div><b class="pname">${esc(p.name)}</b><span>Edited ${ago(p.updated)} · ${p.artboards} artboard${p.artboards === 1 ? "" : "s"}${claudeLine}</span></div><button class="more" title="More">•••</button></div></div>`;
+  }).join("") || `<p class="muted">${q ? "No project matches." : "No projects yet: start one above, or ask Claude in your chat."}</p>`;
   refreshTrashCount();
 }
+const tplCard = (t) => `<div class="pcard tplcard" data-tpl="${esc(t.id)}"><div class="pthumb">${thumbHtml(`/api/templates/${t.id}/preview`, { width: t.width, height: t.height }, 260, 150)}<div class="pbadges"><span class="pbadge">${esc(t.kind || "Template")}</span></div></div><div class="pmeta"><div><b class="pname">${esc(t.name)}</b><span>${t.width} × ${t.height || "auto"} · template</span></div><button class="more" title="More">•••</button></div></div>`;
+async function renderTemplates() {
+  const tpls = await op("listTemplates");
+  $("#tpl-all").innerHTML = tpls.map(tplCard).join("") || `<p class="muted">No templates yet. Right-click an artboard → <b>Save as template…</b>, or ask Claude to save one.</p>`;
+}
+async function newFromTemplate(id) {
+  const t = (await op("listTemplates")).find((x) => x.id === id); if (!t) return;
+  await op("createProject", { name: t.name, template: id }); openEditor(true);
+}
+function templateMenu(x, y, id) {
+  openMenu(x, y, [
+    ["New project from template", () => newFromTemplate(id)],
+    ["Add to the open project", async () => { await op("useTemplate", { templateId: id }); openEditor(false); }], "-",
+    ["Rename", () => {
+      const b = $(`[data-tpl="${id}"] .pname`); if (!b) return;
+      const input = document.createElement("input"); input.value = b.textContent; input.className = "rename";
+      b.replaceWith(input); input.focus(); input.select();
+      let done = false;
+      const finish = async (ok) => { if (done) return; done = true; if (ok && input.value.trim()) await op("renameTemplate", { id, name: input.value.trim() }); homeView === "templates" ? renderTemplates() : renderHome(); };
+      input.onkeydown = (ev) => { ev.stopPropagation(); if (ev.key === "Enter") finish(true); if (ev.key === "Escape") finish(false); };
+      input.onclick = (ev) => ev.stopPropagation();
+      input.onblur = () => finish(true);
+    }],
+    ["Delete template", () => confirmBox("Delete this template? Projects made from it keep their copy.", "Delete", async () => { await op("deleteTemplate", { id }); homeView === "templates" ? renderTemplates() : renderHome(); }), { danger: true }],
+  ]);
+}
+for (const g of ["#tpl-grid", "#tpl-all"]) {
+  $(g).addEventListener("click", (e) => { const c = e.target.closest("[data-tpl]"); if (!c) return; if (e.target.closest(".more")) { const r = e.target.getBoundingClientRect(); return templateMenu(r.left, r.bottom + 4, c.dataset.tpl); } newFromTemplate(c.dataset.tpl); });
+  $(g).addEventListener("contextmenu", (e) => { const c = e.target.closest("[data-tpl]"); if (!c) return; e.preventDefault(); templateMenu(e.clientX, e.clientY, c.dataset.tpl); });
+}
+$("#kind-filter").addEventListener("click", (e) => { const b = e.target.closest("[data-kind]"); if (b) { kindFilter = b.dataset.kind; renderHome(); } });
+$("#activity").addEventListener("click", (e) => { const r = e.target.closest(".arow"); if (r) openProjectId(r.dataset.pid); });
+// click-to-copy (prompt ideas, the connect command)
+$("#home").addEventListener("click", async (e) => {
+  const c = e.target.closest("[data-copy]"); if (!c) return;
+  try { await navigator.clipboard.writeText(c.dataset.copy); toast("Copied. Paste it in your Claude chat" + (c.closest(".connect") ? " terminal." : ".")); } catch { toast(c.dataset.copy); }
+});
+// the home screen follows what Claude does in the background
+let homeT;
+const homeLater = () => { if ($("#home").hidden || homeView !== "home") return; clearTimeout(homeT); homeT = setTimeout(renderHome, 1200); };
+es.addEventListener("bg", homeLater);
+es.addEventListener("agent", (e) => { if (JSON.parse(e.data).kind === "run") homeLater(); });
+
+// ---- settings: Claude connection, backups, app version ----
+async function openSettings() {
+  const box = $("#settings");
+  const [st, con] = await Promise.all([op("settings"), op("connection").catch(() => null)]);
+  const connected = con && (con.hello || con.configured);
+  box.hidden = false;
+  box.innerHTML = `<div class="sbox">
+    <div class="s-head"><b>Settings</b><button class="x" title="Close">×</button></div>
+    <section><h4>Claude</h4>
+      <p>${connected ? `<span class="pill ok"><i></i>Claude Code connected</span>${con.hello ? ` <span class="muted">last seen ${ago(con.hello.at)}</span>` : ""}` : `<span class="pill"><i></i>Not connected yet</span>`}</p>
+      <p class="muted">Connect once with this command in a terminal; then every Claude Code chat can design here.</p>
+      <div class="cmd"><code>${esc(mcpCommand(con ? con.root : ""))}</code><button data-copy="${esc(mcpCommand(con ? con.root : ""))}">Copy</button></div>
+      <p class="muted">Quick actions in the app (Edit, Variations, Review fixes) run Claude Code on your own login: ${con && con.askAvailable ? "available." : "Claude Code isn't installed on this Mac."}</p>
+    </section>
+    <section><h4>Backups</h4>
+      <label class="chk full"><input type="checkbox" data-s="autoBackup" ${st.autoBackup ? "checked" : ""}> Back up all projects every day</label>
+      <div class="f"><label>Folder (an iCloud or Dropbox folder keeps a copy off this Mac)</label><input data-s="backupDir" value="${esc(st.backupDir)}"></div>
+      <div class="f"><label>Keep the last</label><div class="row"><input data-s="backupKeep" type="number" min="1" max="90" value="${st.backupKeep}" style="width:80px"><span class="muted">backups</span></div></div>
+      <p class="muted">${st.lastBackup ? `Last backup ${ago(st.lastBackup)}` : "No backup yet"} · ${st.backups} in the folder</p>
+      <div class="row"><button data-sa="backup" class="primary">Back up now</button><button data-sa="reveal">Show in Finder</button></div>
+    </section>
+    <section><h4>App</h4>
+      <p class="muted">Code version <code>${esc(con ? con.hash : "?")}</code>${con && con.bundle ? " · Mac app" : ""}${con && con.stale ? " · <b>newer code is available</b>" : " · up to date"}</p>
+      ${con && con.stale ? `<div class="row"><button data-sa="${con.bundle ? "rebuild" : "restart"}" class="primary">${con.bundle ? "Rebuild &amp; restart" : "Restart server"}</button></div>` : ""}
+    </section></div>`;
+  const onKey = (e) => { if (e.key === "Escape" && !box.hidden) close(); };
+  const close = () => { box.hidden = true; removeEventListener("keydown", onKey, true); };
+  addEventListener("keydown", onKey, true);
+  box.querySelector(".x").onclick = close;
+  box.onclick = async (e) => {
+    if (e.target === box) return close();
+    const c = e.target.closest("[data-copy]"); if (c) { try { await navigator.clipboard.writeText(c.dataset.copy); toast("Copied."); } catch {} return; }
+    const a = e.target.closest("[data-sa]"); if (!a) return;
+    if (a.dataset.sa === "backup") { a.disabled = true; a.textContent = "Backing up…"; try { const r = await op("backupNow"); toast(`Backed up ${r.projects} projects (${Math.round(r.size / 1024 / 1024 * 10) / 10} MB).`); } catch {} openSettings(); }
+    if (a.dataset.sa === "reveal") op("revealBackups");
+    if (a.dataset.sa === "rebuild") { await op("rebuildApp"); toast("Rebuilding: Studio closes and opens again in a moment…"); }
+    if (a.dataset.sa === "restart") { await op("restartServer"); toast("Restarting…"); }
+  };
+  box.onchange = async (e) => {
+    const f = e.target.closest("[data-s]"); if (!f) return;
+    const v = f.type === "checkbox" ? f.checked : f.type === "number" ? Number(f.value) : f.value;
+    try { await op("setSettings", { [f.dataset.s]: v }); toast("Saved."); } catch { openSettings(); }
+  };
+  box.onkeydown = (e) => e.stopPropagation();
+}
+$("#btn-settings").onclick = openSettings;
+
 async function openProjectId(id) { await op("openProject", { id }); openEditor(false); }
 function projectMenu(x, y, id) {
   const card = $(`.pcard[data-pid="${id}"]`);
@@ -1631,9 +1808,9 @@ function confirmBox(text, okLabel, onOk) {
   $("#c-ok").onclick = () => { pop.hidden = true; onOk(); };
 }
 // ---- trash: restore, or delete for good (one, several, or all) ----
-let trashOpen = false, trashItems = [];
+let trashItems = [];
 const trashSel = new Set();
-function showTrash(on) { trashOpen = on; trashSel.clear(); $("#home-main").hidden = on; $("#trash-view").hidden = !on; $("#home-search").hidden = on; if (on) renderTrash(); else renderHome(); }
+function showTrash(on) { trashSel.clear(); setHomeView(on ? "trash" : "home"); }
 async function refreshTrashCount() { const n = (await op("trash")).length; $("#trash-count").textContent = n ? n : ""; }
 async function renderTrash() {
   trashItems = await op("trash");
@@ -1668,8 +1845,8 @@ function route() {
   const home = !location.hash.startsWith("#/edit");
   $("#home").hidden = !home;
   document.body.classList.toggle("at-home", home);
-  if (home) { closeMenus(); trashOpen ? showTrash(false) : renderHome(); document.title = "Studio"; }
-  else { if (project) document.title = project.name + " — Studio"; setTimeout(() => { drawOverlay(); ensureVisible(); }, 30); }
+  if (home) { closeMenus(); setHomeView("home"); document.title = "Studio"; }
+  else { $("#settings").hidden = true; if (project) document.title = project.name + " — Studio"; setTimeout(() => { drawOverlay(); ensureVisible(); }, 30); }
 }
 addEventListener("hashchange", route);
 $("#btn-home").onclick = goHome;
@@ -1679,6 +1856,8 @@ route();
 
 // ---------- layers panel ----------
 const ICONS = { div: "▢", img: "▨", svg: "⬡", span: "T", p: "T", a: "↗" };
+const LOCK_ON = `<svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>`;
+const LOCK_OFF = `<svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 4.9-.7"/></svg>`;
 const iconOf = (n) => (n.group ? "◫" : ICONS[n.tag] || "▢");
 function renderLayers(scroll) {
   layersList.textContent = "";
@@ -1692,7 +1871,8 @@ function renderLayers(scroll) {
     row.draggable = !n.artboard;
     row.style.paddingLeft = 6 + depth * 14 + "px";
     const open = !collapsed.has(n.id);
-    row.innerHTML = `<span class="tw">${kids.length ? (open ? "▼" : "▶") : ""}</span><span class="ic">${n.artboard ? "▣" : n.component ? "◆" : n.instanceOf ? "◇" : n.crop ? "▨" : n.group ? "◫" : isTextLeaf(n) ? "T" : ICONS[n.tag] || "▢"}</span><span class="nm"></span><span class="eye" title="Show/hide">${n.hidden ? "○" : "●"}</span>`;
+    row.className += n.locked ? " locked" : "";
+    row.innerHTML = `<span class="tw">${kids.length ? (open ? "▼" : "▶") : ""}</span><span class="ic">${n.artboard ? "▣" : n.component ? "◆" : n.instanceOf ? "◇" : n.crop ? "▨" : n.group ? "◫" : isTextLeaf(n) ? "T" : ICONS[n.tag] || "▢"}</span><span class="nm"></span>${n.artboard ? "" : `<span class="lock" title="${n.locked ? "Unlock" : "Lock"}">${n.locked ? LOCK_ON : LOCK_OFF}</span>`}<span class="eye" title="Show/hide">${n.hidden ? "○" : "●"}</span>`;
     row.querySelector(".nm").textContent = label(n);
     layersList.appendChild(row);
     if (kids.length && open) kids.forEach((c) => walk(c, depth + 1));
@@ -1705,11 +1885,16 @@ layersList.addEventListener("click", (e) => {
   const id = row.dataset.lid;
   if (e.target.classList.contains("tw")) { collapsed.has(id) ? collapsed.delete(id) : collapsed.add(id); return renderLayers(); }
   if (e.target.classList.contains("eye")) return op("setHidden", { nodeId: id, hidden: !nodeOf(id).hidden });
+  if (e.target.closest(".lock")) return op("setLocked", { nodeIds: [id], locked: !nodeOf(id).locked });
   if (e.shiftKey) select(selection.includes(id) ? selection.filter((s) => s !== id) : [...selection, id], { scroll: false });
   else select([id], { scroll: false });
-  const ab = artboardOf(id); const el = elFor(id);
-  if (el) { const vr = viewport.getBoundingClientRect(), r = el.getBoundingClientRect(); if (r.bottom < vr.top || r.top > vr.bottom || r.right < vr.left || r.left > vr.right) { view.x += vr.left + vr.width / 2 - (r.left + r.width / 2); view.y += vr.top + vr.height / 2 - (r.top + Math.min(r.height / 2, 200)); applyView(); } }
+  reveal(id);
 });
+// scroll the canvas so a layer is on screen (it stays where it is if it already is)
+function reveal(id) {
+  const el = elFor(id);
+  if (el) { const vr = viewport.getBoundingClientRect(), r = el.getBoundingClientRect(); if (r.bottom < vr.top || r.top > vr.bottom || r.right < vr.left || r.left > vr.right) { view.x += vr.left + vr.width / 2 - (r.left + r.width / 2); view.y += vr.top + vr.height / 2 - (r.top + Math.min(r.height / 2, 200)); applyView(); } }
+}
 layersList.addEventListener("dblclick", (e) => {
   const row = e.target.closest(".lrow"); if (!row || !e.target.classList.contains("nm")) return;
   renameLayer(row.dataset.lid);
@@ -1857,7 +2042,7 @@ function renderInspector() {
   const key = focused && focused.dataset.prop;
   const caret = focused && focused.selectionStart !== undefined ? [focused.selectionStart, focused.selectionEnd] : null;
   inspector.textContent = "";
-  if (!selection.length) { inspector.innerHTML = `<div class="hint">Select something on the canvas or in Layers to edit it.<br><br><b>Tips</b><br>Double-click text to edit it.<br>Drag an element to move it anywhere (guides snap to centres and edges). Drag its blue edge to resize.<br>R / O / T / F draw a rectangle, oval, text or frame. Hold Alt to measure distances.<br>⌘] and ⌘[ change layer order.<br>Drag layers to reorder.<br>Hold Space and drag to pan, pinch or ⌘-scroll to zoom.<br>Paste or drop an image to add it. Double-click an image to crop it.<br>Drag on empty canvas to box-select. ⌘C / ⌘V copy and paste layers.<br>Present plays your artboards as slides.</div>`; return; }
+  if (!selection.length) { inspector.innerHTML = `<div class="hint">Select something on the canvas or in Layers to edit it.<br><br><b>With Claude</b><br>Ask in your Claude chat: it designs here, live, and you keep or undo each run.<br>Select something: the bar above it lets Claude edit it, make variations or review an artboard.<br>N pins a note on what you selected; say “do my notes” in your chat.<br><br><b>Tips</b><br>Double-click text to edit it.<br>Drag an element to move it anywhere (guides snap to centres and edges). Drag its blue edge to resize.<br>R / O / T / F draw a rectangle, oval, text or frame. Hold Alt to measure distances.<br>⌘] and ⌘[ change layer order.<br>Drag layers to reorder.<br>Hold Space and drag to pan, pinch or ⌘-scroll to zoom.<br>Paste or drop an image to add it. Double-click an image to crop it.<br>Drag on empty canvas to box-select. ⌘C / ⌘V copy and paste layers.<br>Present plays your artboards as slides.</div>`; return; }
   const n = nodeOf(selection[0]);
   if (!n) return;
   const st = n.style || {};
@@ -1881,6 +2066,10 @@ function renderInspector() {
   } else html.push(`<div class="sec"><h4>Spacing</h4><div class="grid2">${inp("Padding", "padding")}${inp("Margin", "margin")}</div></div>`);
   if (!n.artboard) {
     html.push(`<div class="sec"><h4>Position</h4><div class="grid2">${sel("Type", "position", ["static", "relative", "absolute"])}${inp("Z-index", "z-index")}${st.position === "absolute" ? inp("Left", "left") + inp("Top", "top") + inp("Right", "right") + inp("Bottom", "bottom") : ""}<div class="f"><label>Rotation °</label><input type="number" step="1" data-rot value="${rotOf(st.transform)}"></div>${inp("Transform", "transform", { ph: "rotate(-4deg)" })}</div></div>`);
+  }
+  if (!n.artboard && !multi) {
+    const lk = linkOf(n.id);
+    html.push(`<div class="sec"><h4>Link</h4><div class="linkrow"><input data-link value="${esc(lk && lk.own ? lk.href : "")}" placeholder="https://…">${lk && lk.own ? `<button data-unlink title="Remove the link">×</button>` : ""}</div>${lk && !lk.own ? `<p class="muted linknote">Inside a link: ${esc(lk.href)}</p>` : ""}</div>`);
   }
   if (n.tag === "svg" && !multi) html.push(pen.svgControls(n));
   if (n.artboard && !multi) html.push(guides.gridControls(n));
@@ -1911,6 +2100,9 @@ function renderInspector() {
   inspector.querySelectorAll("[data-align-act]").forEach((b) => (b.onclick = () => alignSel(b.dataset.alignAct)));
   inspector.querySelectorAll("[data-align]").forEach((b) => (b.onclick = () => setStyle({ "text-align": b.dataset.align })));
   inspector.querySelectorAll("[data-attr]").forEach((el) => el.addEventListener("change", () => op("setAttrs", { nodeId: el.dataset.attrId || n.id, attrs: { [el.dataset.attr]: el.value || null } })));
+  const li = inspector.querySelector("[data-link]");
+  if (li) { li.addEventListener("change", () => op("setLink", { nodeId: n.id, href: li.value.trim() || null })); li.addEventListener("keydown", (e) => { if (e.key === "Enter") li.blur(); e.stopPropagation(); }); }
+  const ul = inspector.querySelector("[data-unlink]"); if (ul) ul.onclick = () => op("setLink", { nodeId: n.id, href: null });
   wireInspector(ectx, n, inspector);
   if (n.tag === "svg") pen.wireSvg(n, inspector);
   if (n.artboard) guides.wireGrid(n, inspector);
@@ -1943,20 +2135,33 @@ function renderInspector() {
   }
   if (key) { const again = inspector.querySelector(`[data-prop="${key}"]`); if (again) { again.focus(); if (caret && again.setSelectionRange) try { again.setSelectionRange(...caret); } catch {} } }
 }
-const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+// the link a layer sits in: its own (a link, or an image wrapped in one) or a link around it
+function linkOf(id) {
+  const chain = []; for (let r = find(id); r; r = r.parent ? find(r.parent.id) : null) chain.unshift(r.node);
+  for (let i = chain.length - 1; i >= 0; i--) { const x = chain[i]; if (x.tag === "a" && x.attrs && x.attrs.href) return { id: x.id, href: x.attrs.href, own: i === chain.length - 1 || (x.linkWrap && i === chain.length - 2) }; }
+  return null;
+}
 
 // features that live in their own files get the editor's internals through one object
 const ectx = {
   $, op, toast, esc, FONTS, pop, es,
   get state() { return state; }, get selection() { return selection; },
   select, nodeOf, find, elFor, insertTarget, insertHtml, pickImage, openMenu, confirmBox, fit, drawOverlay, isTextLeaf, isContainer, view: () => view,
-  world, setTool, artboardOf, currentArtboard,
+  world, setTool, artboardOf, currentArtboard, viewport, overlay, label, upload, PRESETS, linkOf,
+  onOverlay: (fn) => overlayHooks.push(fn), reveal,
+  get drag() { return drag; }, get editing() { return editing; }, get cropping() { return cropping; }, get project() { return project; },
+  openProjectId: (id) => openProjectId(id), goHome: () => goHome(),
 };
 const assets = initAssets(ectx);
+ectx.showTab = (t) => { if (panelState.lc) togglePanel("l", false); assets.setTab(t); };
 guides = initGuides(ectx);
 pen = initPen(ectx);
 initTips();
 const ask = initAsk(ectx);
+claude = initClaude(ectx);
+notes = initNotes(ectx);
+ectx.notesCompose = (ids) => notes.compose(ids);
+selbar = initSelbar(ectx, { ask });
 const exporter = initExport(ectx);
 const history = initHistory(ectx);
 $("#btn-history").onclick = () => history.open();

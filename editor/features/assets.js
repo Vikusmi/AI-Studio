@@ -28,7 +28,9 @@ export function initAssets(ctx) {
     tabs.forEach((b) => b.classList.toggle("on", b.dataset.ptab === t));
     $("#layers-list").hidden = t !== "layers";
     box.hidden = t !== "assets";
+    const np = $("#notes-panel"); if (np) np.hidden = t !== "notes";
     if (t === "assets") render();
+    window.dispatchEvent(new CustomEvent("studio-tab", { detail: t }));
   }
   tabs.forEach((b) => (b.onclick = () => setTab(b.dataset.ptab)));
 
@@ -63,7 +65,7 @@ export function initAssets(ctx) {
       <div class="asec"><div class="ahead"><h4>Fonts</h4><button data-add-font title="Upload a font file (.woff2, .woff, .ttf, .otf)">＋</button></div>
         ${fontsHtml()}
       </div>
-      <div class="asec"><div class="ahead"><h4>Brand</h4></div>
+      <div class="asec"><div class="ahead"><h4>Brand</h4><button data-brand-url class="atext" title="Read the name, colours, fonts and logo from a website">From website…</button></div>
         <div class="f full"><label>Brand name</label><input data-brand="name" value="${esc(b.name)}" placeholder="e.g. AG1"></div>
         <div class="grid2">
           <div class="f"><label>Heading font</label><input data-brand-font="heading" list="fonts" value="${esc(b.fonts.heading)}"></div>
@@ -76,7 +78,26 @@ export function initAssets(ctx) {
         </div>
         <div class="f full"><label>Notes for Claude (tone, rules)</label><textarea data-brand="notes" rows="3" placeholder="Editorial, calm, no emojis…">${esc(b.notes)}</textarea></div>
       </div>`;
+    box.appendChild(iconSec);
   }
+
+  // ---------- icons: the built-in library (kept between renders, so the search survives Claude's edits) ----------
+  const iconSec = document.createElement("div"); iconSec.className = "asec icons";
+  iconSec.innerHTML = `<div class="ahead"><h4>Icons</h4><span class="muted">Lucide</span></div><input type="search" data-icon-q placeholder="Search 1,500 icons: arrow, cart, star…"><div class="icon-grid"></div><p class="ahint">Click to add to the selected frame. The line colour follows the layer's text colour.</p>`;
+  const iconGrid = iconSec.querySelector(".icon-grid"), iconQ = iconSec.querySelector("[data-icon-q]");
+  let iconT;
+  async function searchIcons() {
+    const list = await op("searchIcons", { query: iconQ.value, limit: 48 });
+    iconGrid.innerHTML = list.map((i) => `<button data-icon="${esc(i.name)}" title="${esc(i.name)}"><img src="/api/icon?name=${encodeURIComponent(i.name)}&size=20" alt=""></button>`).join("") || `<span class="muted">No icon matches.</span>`;
+  }
+  iconQ.addEventListener("input", () => { clearTimeout(iconT); iconT = setTimeout(searchIcons, 120); });
+  iconQ.addEventListener("keydown", (e) => e.stopPropagation());
+  iconGrid.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-icon]"); if (!b) return;
+    const parent = ctx.insertTarget(); if (!parent) return toast("Create an artboard first.");
+    try { const r = await op("insertIcon", { name: b.dataset.icon, parentId: parent, size: 32, color: "#161616" }); ctx.select(r.map((x) => x.id)); } catch {}
+  });
+  window.addEventListener("studio-tab", (e) => { if (e.detail === "assets" && !iconGrid.children.length) searchIcons(); });
   window.addEventListener("studio-refresh", () => { if (!box.hidden) render(); fontList(); });
 
   const fontsHtml = () => {
@@ -106,6 +127,22 @@ export function initAssets(ctx) {
       $("#ft-name").focus(); $("#ft-name").select();
     };
     inp.click();
+  }
+
+  // the brand kit read from a website: name, colours, fonts, logo
+  function brandFromUrl() {
+    const pop = ctx.pop; pop.hidden = false; pop.style.left = "260px"; pop.style.top = "120px";
+    pop.innerHTML = `<div class="f"><label>Website</label><input id="bu-url" placeholder="e.g. drinkag1.com"></div><div class="muted" style="font-size:11px">Studio reads the site's name, main colours, fonts and logo into this project's brand kit. Check them after.</div><div class="row" style="justify-content:flex-end"><button id="bu-no">Cancel</button><button id="bu-ok" class="primary">Read brand</button></div>`;
+    const inp = $("#bu-url"); inp.focus();
+    $("#bu-no").onclick = () => (pop.hidden = true);
+    const go = async () => {
+      if (!inp.value.trim()) return inp.focus();
+      $("#bu-ok").disabled = true; $("#bu-ok").textContent = "Reading…";
+      try { const b = await op("setBrandFromUrl", { url: inp.value.trim() }); pop.hidden = true; toast(`Brand kit set from ${b.brand.name || "the website"}: ${b.colors.length} colours, ${b.brand.fonts.heading || "no"} / ${b.brand.fonts.body || "no"} fonts.`); }
+      catch { $("#bu-ok").disabled = false; $("#bu-ok").textContent = "Read brand"; }
+    };
+    $("#bu-ok").onclick = go;
+    pop.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") go(); if (e.key === "Escape") pop.hidden = true; };
   }
 
   // brand fonts lead the font suggestions
@@ -214,6 +251,7 @@ export function initAssets(ctx) {
     if (t.closest("[data-new-color]")) return newColor();
     if (t.closest("[data-new-text]")) return newText();
     if (t.closest("[data-logo-set]")) return ctx.pickImage(async (s) => { try { await op("setBrand", { logo: s }); } catch {} });
+    if (t.closest("[data-brand-url]")) return brandFromUrl();
     if (t.closest("[data-logo-clear]")) return op("setBrand", { logo: "" });
     if (t.closest("[data-logo-insert]")) { const l = brand().logo; return l && ctx.insertHtml(`<img layer-name="Logo" src="${l}" style="height:40px;width:auto;display:block">`); }
     const it = t.closest("[data-comp]"); if (it && !t.closest("input")) return insertInstance(it.dataset.comp);

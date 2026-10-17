@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Studio</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23161616'/%3E%3Ccircle cx='16' cy='16' r='7' fill='%23ff4f1f'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23161616'/%3E%3Ccircle cx='16' cy='16' r='7.2' fill='%23ff4f1f'/%3E%3C/svg%3E">
 <script>try{var t=localStorage.getItem("studio-theme")||"auto";document.documentElement.dataset.theme=t==="auto"?(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):t;var P=JSON.parse(localStorage.getItem("studio-panels")||"{}");var r=document.documentElement.style;if(P.lw)r.setProperty("--lw",P.lw+"px");if(P.rw)r.setProperty("--rw",P.rw+"px")}catch(e){}</script>
 <link rel="stylesheet" href="/editor/editor.css">
 <link id="gfonts" rel="stylesheet">
@@ -13,17 +13,41 @@
 <!-- home: all projects + start something new -->
 <section id="home" hidden>
   <header class="home-top">
-    <div class="brand"><span class="dot"></span>Studio</div>
+    <div class="brand"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#161616"/><circle cx="16" cy="16" r="7.2" fill="#ff4f1f"/></svg><span>Studio</span></div>
+    <nav class="home-nav">
+      <button data-hnav="home" class="on">Home</button>
+      <button data-hnav="templates">Templates</button>
+      <button id="btn-trash" title="Trash: restore or delete for good">Trash<span id="trash-count"></span></button>
+    </nav>
     <div class="spacer"></div>
-    <button id="btn-trash" title="Trash">Trash<span id="trash-count"></span></button>
     <input id="home-search" type="search" placeholder="Search projects">
+    <button id="btn-settings" class="icon" title="Settings: Claude connection, backups"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
   </header>
   <div class="home-body">
     <div id="home-main">
+      <section class="hero">
+        <div class="hero-glow" aria-hidden="true"></div>
+        <div class="hero-copy">
+          <div class="eyebrow"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#161616"/><circle cx="16" cy="16" r="7.2" fill="#ff4f1f"/></svg><span>AI design studio</span></div>
+          <h1>Ask Claude in your chat.<br><em>Watch it design here.</em></h1>
+          <p>Claude builds on this canvas through MCP: posts, emails, decks, ads, anything. Select something to change it, pin notes for Claude, or try variations side by side.</p>
+          <div id="hero-status" class="hero-status"></div>
+        </div>
+        <div class="hero-side">
+          <div class="try-title">Try in your Claude chat <span>click to copy</span></div>
+          <div id="try-list" class="try-list"></div>
+        </div>
+      </section>
       <h2>Start something new</h2>
       <div id="new-grid" class="new-grid"></div>
-      <h2>Recent</h2>
+      <div id="activity-wrap" hidden><div class="sec-head"><h2>Claude's recent work</h2></div><div id="activity" class="activity"></div></div>
+      <div id="tpl-wrap" hidden><div class="sec-head"><h2>Templates</h2><button data-hnav="templates" class="link">See all</button></div><div id="tpl-grid" class="tpl-grid"></div></div>
+      <div class="sec-head"><h2>Recent</h2><div id="kind-filter" class="chips"></div></div>
       <div id="proj-grid" class="proj-grid"></div>
+    </div>
+    <div id="templates-view" hidden>
+      <div class="trash-head"><button data-hnav="home">← Projects</button><h2>Templates</h2><div class="spacer"></div><span class="muted">Save any artboard as a template: right-click it → Save as template…</span></div>
+      <div id="tpl-all" class="tpl-grid"></div>
     </div>
     <div id="trash-view" hidden>
       <div class="trash-head">
@@ -42,8 +66,10 @@
 </section>
 
 <header id="top">
-  <button id="btn-home" class="icon" title="All projects (⇧⌘H)"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg></button>
+  <button id="btn-home" class="icon home-mark" title="All projects (⇧⌘H)"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#161616"/><circle cx="16" cy="16" r="7.2" fill="#ff4f1f"/></svg></button>
   <div class="crumb"><span class="muted">Projects /</span> <span id="proj-name" title="Click to rename">Untitled</span></div>
+  <div class="spacer"></div>
+  <button id="claude-chip" class="claude-chip" title="Claude"><span class="cdot"></span><span class="clab">Claude</span></button>
   <div class="spacer"></div>
   <div class="group">
     <button id="btn-undo" class="icon" title="Undo (⌘Z)"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
@@ -51,6 +77,7 @@
   </div>
   <div class="group">
     <button id="btn-snap" class="icon on" title="Snap to guides. Hold ⌘ while dragging to turn it off for one move"><svg viewBox="0 0 24 24"><path d="M6 3v8a6 6 0 0 0 12 0V3"/><path d="M6 7h4M14 7h4"/></svg></button>
+    <button id="btn-notes" class="icon" title="Notes for Claude (select layers, then N)"><svg viewBox="0 0 24 24"><path d="M5 4h14v11l-5 5H5z"/><path d="M14 20v-5h5"/></svg></button>
     <button id="btn-history" class="icon" title="Version history"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></button>
     <button id="btn-ask" class="icon" title="Ask Claude to edit the design (⌘K)"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 16l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></svg></button>
     <button id="btn-theme" class="icon" title="Theme: Auto"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4v16"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none"/></svg></button>
@@ -74,9 +101,10 @@
 </header>
 <main id="app">
   <aside id="layers" class="panel">
-    <div class="panel-head"><div class="ptabs"><button class="ptab on" data-ptab="layers">Layers</button><button class="ptab" data-ptab="assets">Assets</button></div><button class="pcollapse" data-collapse="l" title="Hide layers (⌘\\)"><svg viewBox="0 0 16 16"><path d="M10 3.5L5.5 8l4.5 4.5"/></svg></button></div>
+    <div class="panel-head"><div class="ptabs"><button class="ptab on" data-ptab="layers">Layers</button><button class="ptab" data-ptab="assets">Assets</button><button class="ptab" data-ptab="notes">Notes<span id="notes-count" class="cnt"></span></button></div><button class="pcollapse" data-collapse="l" title="Hide layers (⌘\\)"><svg viewBox="0 0 16 16"><path d="M10 3.5L5.5 8l4.5 4.5"/></svg></button></div>
     <div id="layers-list"></div>
     <div id="assets" hidden></div>
+    <div id="notes-panel" hidden></div>
     <button class="prail" data-collapse="l" title="Show layers"><svg viewBox="0 0 16 16"><path d="M6 3.5L10.5 8 6 12.5"/></svg><span>Layers</span></button>
   </aside>
   <div class="resizer" id="rz-l" title="Drag to resize · double-click to reset"></div>
@@ -85,7 +113,7 @@
     <div id="overlay"></div>
     <div id="empty" hidden>
       <h2>Start with an artboard</h2>
-      <p>Click <b>Artboard</b> below, or ask Claude to design something.<br>Everything Claude builds shows up here live.</p>
+      <p>Ask Claude in your chat to design something, or click <b>Artboard</b> below.<br>Everything Claude builds shows up here live.</p>
     </div>
     <!-- tools, floating at the bottom like Figma -->
     <div id="toolbar">
@@ -108,6 +136,7 @@
   </aside>
 </main>
 <div id="pop" hidden></div>
+<div id="settings" hidden></div>
 <div id="preview" hidden></div>
 <div id="ctx" class="menu" hidden></div>
 <input id="file" type="file" accept="image/*" hidden>

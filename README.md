@@ -1,8 +1,9 @@
 # AI Studio
 
-A local, free design canvas for emails and web pages. You design in your browser, and Claude designs in the
-same canvas through MCP. Layers, inspector, multiple named artboards, drag and drop, and one-click export
-to a single standalone HTML file with images embedded.
+A local AI design studio. You ask Claude in your chat (Claude Code) and it designs on this canvas through MCP, live:
+social posts, emails, decks, ads, posters, web pages. You point at things to change them, pin notes for Claude, try
+variations side by side, and keep or undo every run of Claude's changes. Layers, inspector, artboards, components,
+templates, and exports to HTML, email, PNG/JPG/WebP and PDF.
 
 No accounts, no cloud, no API keys, no telemetry. Node.js 20+ and the Chrome you already have.
 
@@ -42,11 +43,38 @@ something on the canvas and say *"make this bigger"* (Claude reads your selectio
 Screenshots and PNG export use your installed Chrome (Chrome, Chromium and Edge are auto-detected on macOS;
 set `CHROME_PATH` to override). Nothing is downloaded.
 
+### How you work with Claude
+
+- **Ask in the chat.** "Create a 1080×1080 post announcing our summer sale", "make a story and three ad sizes from it",
+  "read the brand from example.com". Claude builds it in Studio while you watch; layers it touches flash violet and the
+  chip in the top bar says what it's doing.
+- **Keep or undo.** When Claude pauses, a bar says how many changes it made: **Keep** or **Undo** (back to before the run,
+  one ⌘Z step). Every run saves a version first ("Before Claude's changes" in History).
+- **Point at things.** Select layers and Claude sees them (`get_selection`, with a picture). Or press **N** to pin a note
+  ("make this bolder"), then say **"do my notes"** in the chat: Claude does each one and replies on the note.
+- **Quick actions in the app.** The bar above the tools works on your selection: **Edit** (type a request), **Variations**
+  (2–4 different versions side by side; *Use this* keeps one), **Note**, **Review** (an artboard's problems, with
+  *Ask Claude to fix*), and for images **Remove BG** / **Upscale** (Claude with your Magnific connector). These run
+  Claude Code on your own login.
+- **Background work.** Claude can work on any project without switching your window (every tool takes a `projectId`);
+  a notice offers to open it.
+
 ### MCP tools
 
-`get_guide`, `get_basic_info`, `get_tree_summary`, `get_children`, `get_node_info`, `get_selection`,
-`create_artboard`, `write_html`, `update_styles`, `set_attributes`, `set_text_content`, `rename_nodes`,
-`delete_nodes`, `duplicate_nodes`, `move_nodes`, `undo`, `get_screenshot`, `export`.
+Projects: `list_projects`, `open_project`, `create_project` (also in the background, or from a template), `rename_project`,
+`duplicate_project`, `trash_project`, `list_trash`, `restore_projects`.
+Reading: `get_guide`, `get_basic_info`, `get_tree_summary`, `get_children`, `get_node_info`, `get_selection`,
+`get_screenshot` (zoom with `scale`/`pad`/`region`, `state: "before"` for before/after), `critique`.
+Building: `create_artboard`, `write_html`, `update_styles`, `set_attributes`, `set_text_content`, `set_link`, `rename_nodes`,
+`delete_nodes`, `duplicate_nodes`, `move_nodes`, `reorder_nodes`, `group_nodes`, `ungroup_nodes`, `split_text_from_box`,
+`set_hidden`, `set_locked`, `set_auto_layout`, `set_guides`, `place_image`, `search_icons`, `insert_icon`.
+More versions: `make_variations`, `pick_variation`, `resize_to_formats`, `save_template`, `list_templates`, `use_template`.
+Notes: `get_requests`, `resolve_request`, `leave_note`.
+Brand and system: `get_brand`, `set_brand`, `brand_from_url`, `create_style`, `apply_style`, `list_components`,
+`create_component`, `create_instance`, `detach_instance`, `list_fonts`.
+History and output: `list_versions`, `save_version`, `restore_version`, `undo`, `redo`, `export`.
+
+A test (`agent-test.mjs`) fails when an app operation has no tool, so Claude can always do what you can.
 
 Images can be absolute local paths (spaces are fine), `file://`, `paper-asset://`, `https://` or `data:` URLs.
 Local files are copied into `assets/` (deduplicated by content).
@@ -86,6 +114,15 @@ Local files are copied into `assets/` (deduplicated by content).
 | Versions | the clock button: **Save version** (with a name) for a milestone; Studio also saves one automatically about every 10 minutes while you work (the last 40 are kept). **Restore** goes back; your current design is saved as a version first and ⌘Z undoes the restore. Versions live in the project's `history/` folder |
 | Fonts | Assets → Fonts → ＋ uploads a .woff2 / .woff / .ttf / .otf file (one file per weight, same name for the same family). It's saved in the project, used by typing its name in a Font field, and embedded in HTML exports, PNG/PDF and screenshots. Google Fonts are cached on this Mac after first use, so designs keep their fonts offline |
 | Tooltips | hover any icon-only button for a moment and a small label names it (with its shortcut); moving along a toolbar shows the next one quickly |
+| Notes | select layers, press **N**, write the request: a numbered pin sits on the layer. The **Notes** tab (or the note button in the top bar) lists them; Claude's replies and the notes Claude leaves you (violet ✦) show there too |
+| Lock | the lock in a layer's row (or right-click → Lock): locked layers can't be clicked or dragged on the canvas, so a background stays put |
+| Link | the **Link** field in the Design panel makes any text, frame, button or image a link |
+| Variations | the selection bar or right-click → Variations…: copies in a row, each with *Use this* under it; the original has *Keep original* / *Discard all* |
+| Formats | right-click an artboard → **Resize to formats…**: copies at other sizes (story, banner, ads, slides…) placed to the right |
+| Templates | right-click an artboard → **Save as template…**. Start from one on the home screen (Templates), or under **+ Artboard** |
+| Icons | Assets → Icons: search 1,500 line icons (Lucide, offline) and click to add one |
+| Brand | Assets → Brand → **From website…** reads a site's name, colours, fonts and logo into the brand kit |
+| Settings | the gear on the home screen: Claude's connection and the command to connect it, daily backups (folder, how many to keep, Back up now), and the app's code version |
 | Other | Delete removes, ⌘Z / ⇧⌘Z undo/redo (shared with Claude), ⌘G groups |
 
 **Email HTML** exports email-safe markup: flex layouts become nested tables, gaps become cell padding, backgrounds/radius/padding move onto `<td>`, buttons become table buttons. Absolute positioning and grid can't exist in email and are reported in a comment at the top. `export` with `format: "email"` does the same from MCP.
@@ -118,6 +155,8 @@ npm test
 - `test/editor5-test.mjs`: home screen, new-from-preset, project rename / duplicate / trash / search, live thumbnails, project switching by Claude, right-click / export / zoom menus, the bottom toolbar.
 - `test/editor4-test.mjs`: presets, the sliding Flow reorder, gradients (stops, angle, radial), solid fill, effects, image crop and ratios, copy/paste, box select, Present.
 - `test/editor3-test.mjs`: free drag with centre guides, edge resizing, the R/O/T/F draw tools, align and distribute, layer order, Alt measuring.
+- `test/agent-test.mjs`: Claude's side over MCP: every operation has a tool, background projects, runs (version first, keep / undo, refusing after your edits), notes, links, locking, images, icons, resize, variations, templates, critique, brand from a website, zoomed and before/after screenshots, backups.
+- `test/studio-ui-test.mjs`: the studio in the browser: home (filters, settings, backups, templates, activity), the selection bar (Edit and Variations through a fake `claude`), Claude's highlights and the Keep / Undo bar, the notice for other projects, notes, lock, link, review, resize to formats, icons, and that only changed artboards are redrawn.
 - `test/editor2-test.mjs`: scroll pan, ⌘-scroll zoom around the cursor, Space-drag pan, ⌘0/⌘±, the + Artboard popover, ⌘G, rich-text editing, resize handles, multi-drag, snapping, Alt+↑, clipboard paste, replace image, layers rename/collapse/multi-select, PNG size, and that the email export lays out within 3px of the browser version.
 
 ## How it fits together
