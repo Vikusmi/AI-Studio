@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Studio</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23161616'/%3E%3Ccircle cx='16' cy='16' r='7' fill='%23ff4f1f'/%3E%3C/svg%3E">
+<script>try{var t=localStorage.getItem("studio-theme")||"auto";document.documentElement.dataset.theme=t==="auto"?(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):t;var P=JSON.parse(localStorage.getItem("studio-panels")||"{}");var r=document.documentElement.style;if(P.lw)r.setProperty("--lw",P.lw+"px");if(P.rw)r.setProperty("--rw",P.rw+"px")}catch(e){}</script>
+<link rel="stylesheet" href="/editor/editor.css">
+<link id="gfonts" rel="stylesheet">
+</head>
+<body>
+<!-- home: all projects + start something new -->
+<section id="home" hidden>
+  <header class="home-top">
+    <div class="brand"><span class="dot"></span>Studio</div>
+    <div class="spacer"></div>
+    <button id="btn-trash" title="Trash">Trash<span id="trash-count"></span></button>
+    <input id="home-search" type="search" placeholder="Search projects">
+  </header>
+  <div class="home-body">
+    <div id="home-main">
+      <h2>Start something new</h2>
+      <div id="new-grid" class="new-grid"></div>
+      <h2>Recent</h2>
+      <div id="proj-grid" class="proj-grid"></div>
+    </div>
+    <div id="trash-view" hidden>
+      <div class="trash-head">
+        <button id="trash-back">← Projects</button>
+        <h2>Trash</h2>
+        <div class="spacer"></div>
+        <span id="trash-sel" class="muted"></span>
+        <button id="trash-selall">Select all</button>
+        <button id="trash-restore" disabled>Restore</button>
+        <button id="trash-delsel" class="danger" disabled>Delete selected</button>
+        <button id="trash-empty" class="danger">Empty Trash</button>
+      </div>
+      <div id="trash-grid" class="proj-grid"></div>
+    </div>
+  </div>
+</section>
+
+<header id="top">
+  <button id="btn-home" class="icon" title="All projects (⇧⌘H)"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg></button>
+  <div class="crumb"><span class="muted">Projects /</span> <span id="proj-name" title="Click to rename">Untitled</span></div>
+  <div class="spacer"></div>
+  <div class="group">
+    <button id="btn-undo" class="icon" title="Undo (⌘Z)"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+    <button id="btn-redo" class="icon" title="Redo (⇧⌘Z)"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
+  </div>
+  <div class="group">
+    <button id="btn-snap" class="icon on" title="Snap to guides. Hold ⌘ while dragging to turn it off for one move"><svg viewBox="0 0 24 24"><path d="M6 3v8a6 6 0 0 0 12 0V3"/><path d="M6 7h4M14 7h4"/></svg></button>
+    <button id="btn-history" class="icon" title="Version history"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></button>
+    <button id="btn-ask" class="icon" title="Ask Claude to edit the design (⌘K)"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 16l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></svg></button>
+    <button id="btn-theme" class="icon" title="Theme: Auto"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4v16"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none"/></svg></button>
+    <button id="btn-preview" class="icon" title="Preview as an email: desktop and mobile (⌥⌘E)"><svg viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+  </div>
+  <div class="group">
+    <button id="btn-fit" class="icon" title="Zoom to fit (⌘0)"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+    <button id="zoom-label" class="ghost" title="Zoom">100%</button>
+  </div>
+  <button id="btn-present" class="icon" title="Present (play artboards as slides)"><svg viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z"/></svg></button>
+  <button id="btn-export" class="primary">Export<svg class="chev" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></button>
+  <div id="export-menu" class="menu" hidden>
+    <button id="btn-export-dlg" class="mi">Export… <span>⇧⌘E · PNG, JPG, WebP, PDF, slices</span></button>
+    <button id="btn-png" class="mi">PNG image <span>2×</span></button>
+    <button id="btn-html" class="mi">HTML page <span>images inside</span></button>
+    <button id="btn-email" class="mi">Email HTML <span>one file</span></button>
+    <button id="btn-email-zip" class="mi">Email + images <span>zip, for an ESP</span></button>
+    <button id="btn-email-eml" class="mi">Test email <span>.eml: open in Outlook / Mail</span></button>
+    <button id="btn-email-copy" class="mi">Copy email HTML <span>images as images/…</span></button>
+  </div>
+</header>
+<main id="app">
+  <aside id="layers" class="panel">
+    <div class="panel-head"><div class="ptabs"><button class="ptab on" data-ptab="layers">Layers</button><button class="ptab" data-ptab="assets">Assets</button></div><button class="pcollapse" data-collapse="l" title="Hide layers (⌘\\)"><svg viewBox="0 0 16 16"><path d="M10 3.5L5.5 8l4.5 4.5"/></svg></button></div>
+    <div id="layers-list"></div>
+    <div id="assets" hidden></div>
+    <button class="prail" data-collapse="l" title="Show layers"><svg viewBox="0 0 16 16"><path d="M6 3.5L10.5 8 6 12.5"/></svg><span>Layers</span></button>
+  </aside>
+  <div class="resizer" id="rz-l" title="Drag to resize · double-click to reset"></div>
+  <section id="viewport">
+    <div id="world"></div>
+    <div id="overlay"></div>
+    <div id="empty" hidden>
+      <h2>Start with an artboard</h2>
+      <p>Click <b>Artboard</b> below, or ask Claude to design something.<br>Everything Claude builds shows up here live.</p>
+    </div>
+    <!-- tools, floating at the bottom like Figma -->
+    <div id="toolbar">
+      <button data-tool="select" title="Move  V"><svg viewBox="0 0 24 24"><path d="M6 3.5l12 7-5.3 1.4L10 17.5z"/></svg></button>
+      <button data-tool="frame" title="Frame  F"><svg viewBox="0 0 24 24"><path d="M8 3v18M16 3v18M3 8h18M3 16h18"/></svg></button>
+      <button data-tool="rect" title="Rectangle  R"><svg viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="13" rx="1.5"/></svg></button>
+      <button data-tool="ellipse" title="Oval  O"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/></svg></button>
+      <button data-tool="pen" title="Pen  P: click for corners, drag for curves, Enter to finish"><svg viewBox="0 0 24 24"><path d="M4 20l3.5-.8L19 7.7a1.9 1.9 0 0 0 0-2.7l-.1-.1a1.9 1.9 0 0 0-2.7 0L4.8 16.4z"/><path d="M14.5 6.5l3 3"/></svg></button>
+      <button data-tool="text" title="Text  T"><svg viewBox="0 0 24 24"><path d="M5 7V5h14v2M12 5v14M9 19h6"/></svg></button>
+      <button id="btn-add-image" title="Image  I (or paste / drop one)"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M4 17l5-4.5 4 3.5 3-2.5 4.5 4"/></svg></button>
+      <span class="sep"></span>
+      <button id="btn-add-artboard" class="wide" title="New artboard: Instagram, story, slide, ad, email…"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Artboard</button>
+    </div>
+  </section>
+  <div class="resizer" id="rz-r" title="Drag to resize · double-click to reset"></div>
+  <aside id="inspector-panel" class="panel">
+    <div class="panel-head"><button class="pcollapse" data-collapse="r" title="Hide design panel (⌘\\)"><svg viewBox="0 0 16 16"><path d="M6 3.5L10.5 8 6 12.5"/></svg></button><span class="panel-title">Design</span></div>
+    <div id="inspector"></div>
+    <button class="prail" data-collapse="r" title="Show design panel"><svg viewBox="0 0 16 16"><path d="M10 3.5L5.5 8l4.5 4.5"/></svg><span>Design</span></button>
+  </aside>
+</main>
+<div id="pop" hidden></div>
+<div id="preview" hidden></div>
+<div id="ctx" class="menu" hidden></div>
+<input id="file" type="file" accept="image/*" hidden>
+<datalist id="fonts"></datalist>
+<script type="module" src="/editor/editor.js"></script>
+</body>
+</html>
