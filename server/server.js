@@ -189,7 +189,7 @@ let configured = { at: 0, value: null };
 function claudeConfigured() {
   if (Date.now() - configured.at < 60000) return configured.value;
   let v = false;
-  try { const s = fs.readFileSync(path.join(os.homedir(), ".claude.json"), "utf8"); v = s.includes("ai-studio") || s.includes("studio/server/mcp.js"); } catch {}
+  try { const s = fs.readFileSync(path.join(os.homedir(), ".claude.json"), "utf8"); const low = s.toLowerCase(); v = low.includes("ai-studio") || low.includes("studio/server/mcp.js"); } catch {}
   configured = { at: Date.now(), value: v };
   return v;
 }
