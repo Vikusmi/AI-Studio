@@ -7,7 +7,7 @@ export function initExport(ctx) {
   function close() { el?.remove(); el = null; }
   function open() {
     close();
-    const arts = ctx.state.artboards; if (!arts.length) return toast("No artboard yet.");
+    const arts = ctx.boards(); if (!arts.length) return toast("No artboard yet.");
     const cur = ctx.currentArtboard() || arts[0];
     el = document.createElement("div"); el.id = "xdlg";
     el.innerHTML = `<div class="xbox" role="dialog"><h3>Export</h3>

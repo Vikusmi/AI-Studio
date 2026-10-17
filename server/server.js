@@ -92,10 +92,10 @@ function projectList() {
     if (docs.has(id)) st = docs.get(id).state;
     else try { st = JSON.parse(fs.readFileSync(f, "utf8")); } catch {}
     const mtime = Math.max(fs.existsSync(f) ? fs.statSync(f).mtimeMs : 0, fs.existsSync(path.join(dir, "meta.json")) ? fs.statSync(path.join(dir, "meta.json")).mtimeMs : 0);
-    const cover = st.artboards[0];
+    const real = st.artboards.filter((a) => !a.free), cover = real[0];
     const w = cover ? parseInt(cover.style.width, 10) || 600 : 0, h = cover ? parseInt(cover.style.height, 10) || 0 : 0;
     const claude = act.find((a) => a.projectId === id);
-    return { id, name: projectName(id), updated: mtime, artboards: st.artboards.length, current: id === projectId, cover: cover ? { width: w, height: h } : null, kind: cover ? kindOf(w, h) : "Empty", notes: openNotesIn(id), claudeAt: claude ? claude.lastAt : null };
+    return { id, name: projectName(id), updated: mtime, artboards: real.length, current: id === projectId, cover: cover ? { width: w, height: h } : null, kind: cover ? kindOf(w, h) : "Empty", notes: openNotesIn(id), claudeAt: claude ? claude.lastAt : null };
   }).sort((a, b) => b.updated - a.updated);
 }
 // trash entries are "<project id>-<deleted at ms>" folders under .trash
@@ -207,8 +207,10 @@ const ops = {
     return {
       project: d.dir, projectId: d.projectId, projectName: projectName(d.projectId), openProjectId: projectId,
       url: `http://127.0.0.1:${PORT}`, version: d.version, selection: d.selection,
-      artboards: d.state.artboards.map((a) => ({ id: a.id, name: a.name, width: a.style.width, height: a.style.height, x: a.x, y: a.y, childCount: a.children.length, ...(a.variant ? { variant: a.variant } : {}) })),
+      artboards: d.boards().map((a) => ({ id: a.id, name: a.name, width: a.style.width, height: a.style.height, x: a.x, y: a.y, childCount: a.children.length, ...(a.variant ? { variant: a.variant } : {}) })),
       openNotes: notes.openCount(d),
+      // layers placed on the canvas outside every artboard: kept in the project, not exported
+      canvasLayers: d.state.artboards.filter((a) => a.free).map((a) => ({ id: a.id, name: d.label(a), x: a.x, y: a.y })),
     };
   },
   tree: ({ nodeId, depth = 4 }) => {
@@ -285,6 +287,7 @@ const ops = {
   },
   setLocked: (a) => D().setLocked(a),
   setLink: (a) => D().setLink(a),
+  relocate: (a) => D().relocate(a),
   placeImage: (a) => D().placeImage(a),
   insertIcon: (a) => D().insertIcon(a),
   searchIcons: ({ query, limit }) => searchIcons(query, limit),
@@ -293,7 +296,7 @@ const ops = {
   pickVariant: (a) => D().pickVariant(a),
   discardVariants: (a) => D().discardVariants(a),
   critique: async ({ nodeId }) => {
-    const d = D(), ab = nodeId ? d.artboardOf(nodeId) : d.state.artboards[0];
+    const d = D(), ab = nodeId ? d.artboardOf(nodeId) : d.boards()[0];
     if (!ab) throw new Error(nodeId ? `No artboard for "${nodeId}".` : "No artboards yet.");
     return critique(d, ab, { inspect: inspectPage });
   },
@@ -481,7 +484,7 @@ const server = http.createServer(async (req, res) => {
       if (!dir || !fs.existsSync(dir)) return send(res, 404, "Not found", "text/plain");
       if (rest !== "preview") return serveFile(res, path.join(dir, decodeURIComponent(rest)));
       const d = kind === "projects" ? docs.get(id) || new Doc(dir) : templates.docOf(id);
-      return send(res, 200, previewPage(d, d.state.artboards[0]), TYPES[".html"]);
+      return send(res, 200, previewPage(d, d.boards()[0]), TYPES[".html"]);
     }
     if (p === "/api/icon") {
       try { return send(res, 200, iconSvg(q("name"), { size: Number(q("size")) || 24, color: q("color") || "currentColor", strokeWidth: Number(q("stroke")) || 2 }), "image/svg+xml"); }
@@ -530,7 +533,8 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/export") {
       const fmt = q("format") || "html";
       const all = q("scope") === "all";
-      const node = all ? (pd.state.artboards[0] || (() => { throw new Error("No artboards yet."); })()) : pd.need(q("id")).node;
+      const boards = pd.boards();
+      const node = all ? (boards[0] || (() => { throw new Error("No artboards yet."); })()) : pd.need(q("id")).node;
       const imgOpts = { type: { png: "png", jpg: "jpeg", jpeg: "jpeg", webp: "webp" }[fmt], scale: Number(q("scale")) || 2, quality: Number(q("quality")) || 90 };
       const eo = { raster: ["none", "all"].includes(q("raster")) ? q("raster") : q("raster") === "0" ? "none" : "auto", images: q("images") === "files" ? "files" : "data", format: q("quality") === "png" ? "png" : "jpeg" };
       const base = fileBase(node);
@@ -545,14 +549,14 @@ const server = http.createServer(async (req, res) => {
       }
       if (fmt === "email-zip") { const r = await buildEmailZip(pd, node, eo); res.writeHead(200, head("application/zip", base + "-email.zip", r.warnings)); return res.end(r.zip); }
       if (fmt === "eml") { const r = await buildEml(pd, node, eo); res.writeHead(200, head("message/rfc822", base + ".eml", r.warnings)); return res.end(r.eml); }
-      const pname = pd.state.artboards.length > 1 || all ? (pd.projectId || "project").replace(/[^\w\-]+/g, "-").toLowerCase() : base;
+      const pname = boards.length > 1 || all ? (pd.projectId || "project").replace(/[^\w\-]+/g, "-").toLowerCase() : base;
       if (imgOpts.type) {
-        if (all) { res.writeHead(200, head("application/zip", pname + "-" + fmt + ".zip")); return res.end(await buildImagesZip(pd, pd.state.artboards, imgOpts)); }
+        if (all) { res.writeHead(200, head("application/zip", pname + "-" + fmt + ".zip")); return res.end(await buildImagesZip(pd, boards, imgOpts)); }
         const r = await buildImage(pd, node, imgOpts); res.writeHead(200, head(r.mime, base + "." + r.ext)); return res.end(r.buf);
       }
-      if (fmt === "pdf") { const abs = all ? pd.state.artboards : [pd.artboardOf(node.id) || node]; res.writeHead(200, head("application/pdf", (all ? pname : base) + ".pdf")); return res.end(await buildPdf(pd, abs)); }
+      if (fmt === "pdf") { const abs = all ? boards : [pd.artboardOf(node.id) || node]; res.writeHead(200, head("application/pdf", (all ? pname : base) + ".pdf")); return res.end(await buildPdf(pd, abs)); }
       if (fmt === "slices") { res.writeHead(200, head("application/zip", base + "-slices.zip")); return res.end(await buildSlices(pd, pd.artboardOf(node.id) || node, { type: { jpg: "jpeg", webp: "webp" }[q("type")] || "png", scale: imgOpts.scale, quality: imgOpts.quality })); }
-      if (all) { res.writeHead(200, head("application/zip", pname + "-html.zip")); return res.end(await buildHtmlZip(pd, pd.state.artboards)); }
+      if (all) { res.writeHead(200, head("application/zip", pname + "-html.zip")); return res.end(await buildHtmlZip(pd, boards)); }
       const html = await pd.page(node, { embed: q("embed") !== "0" });
       res.writeHead(200, head(TYPES[".html"], base + ".html", []));
       return res.end(html);

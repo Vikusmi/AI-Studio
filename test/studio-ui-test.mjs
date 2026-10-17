@@ -133,6 +133,29 @@ try {
   assert.equal(lk.tag, "a"); assert.equal(lk.attrs.href, "https://example.com/x");
   ok("the Link field turns a layer into a link");
 
+  // ---- layers outside the artboards: dragged out they stay on the canvas; dragged onto an artboard they go into it
+  const drag = async (sel, toX, toY) => { const [x, y] = await center(sel); await page.mouse.move(x, y); await page.mouse.down(); for (let i = 1; i <= 12; i++) await page.mouse.move(x + ((toX - x) * i) / 12, y + ((toY - y) * i) / 12); await page.mouse.up(); await sleep(600); };
+  for (let i = 0; i < 2; i++) { await page.keyboard.down("Meta"); await page.keyboard.press("-"); await page.keyboard.up("Meta"); } await sleep(300); // room around the artboards
+  await page.mouse.click(...(await center(`[data-id="${box.id}"]`))); await sleep(150);
+  const abBox = await page.$eval(`[data-id="${ab2.id}"]`, (e) => { const b = e.getBoundingClientRect(), v = document.querySelector("#viewport").getBoundingClientRect(); return { right: Math.min(b.right + 90, v.right - 70), top: b.top }; });
+  await drag(`[data-id="${box.id}"]`, abBox.right, abBox.top + 60);
+  let info = await op("info");
+  assert.ok(info.canvasLayers.some((c) => c.id === box.id), "the box is on the canvas now: " + JSON.stringify(info.canvasLayers));
+  assert.ok(!info.artboards.some((a) => a.id === box.id), "and it isn't an artboard");
+  assert.ok(await visible(`[data-id="${box.id}"]`), "still visible");
+  assert.ok(!(await op("tree", { nodeId: ab2.id })).includes(box.id));
+  const zipAll = await fetch(BASE + "/api/export?scope=all&format=html"); assert.ok(zipAll.ok);
+  await page.mouse.click(...(await center(`[data-id="${box.id}"]`))); await sleep(150);
+  assert.deepEqual((await op("info")).selection, [box.id], "it can be selected on the canvas");
+  await drag(`[data-id="${box.id}"]`, ...(await page.$eval(`[data-id="${ab.id}"]`, (e) => { const b = e.getBoundingClientRect(); return [b.left + b.width / 2, b.top + 40]; })));
+  info = await op("info");
+  assert.ok(!info.canvasLayers.length, "back in an artboard"); assert.ok((await op("tree", { nodeId: ab.id })).includes(box.id), "in the artboard it was dropped on");
+  assert.equal((await node(box.id)).style.position, "absolute");
+  await op("undo"); await op("undo"); await sleep(400);
+  assert.ok((await op("tree", { nodeId: ab2.id })).includes(box.id), "two undos put it back where it was");
+  await page.click("#btn-fit"); await sleep(300);
+  ok("drag a layer off an artboard: it stays on the canvas (not exported); drag it onto any artboard to put it in");
+
   // ---- variations from the bar (fake claude redesigns the copies) ----
   await corner(ab2.id); await sleep(300);
   assert.deepEqual((await op("info")).selection, [ab2.id]);

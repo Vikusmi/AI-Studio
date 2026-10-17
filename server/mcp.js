@@ -111,6 +111,7 @@ Brand, styles and components
 
 Editing
 - update_styles takes nodeIds and a styles object (null removes a property). On an artboard, left/top move it on the canvas.
+- Layers outside the artboards (canvasLayers in get_basic_info) are spare pieces: kept, never exported. move_layers puts them back into an artboard.
 - duplicate_nodes, move_nodes (new parent + index), delete_nodes, rename_nodes, reorder_nodes, group_nodes, set_hidden, set_locked.
 - save_version before a big redesign if the user may want to compare; list_versions / restore_version go back.
 
@@ -216,6 +217,12 @@ tool(
   "Split a text element that has its own background/border/padding (a button) into a box with a separate text layer inside, so the text can be moved and edited on its own.",
   { nodeId: z.string(), width: z.number().optional(), height: z.number().optional() },
   async (a) => text({ text: await op("splitText", { nodeId: a.nodeId, width: a.width, height: a.height }) })
+);
+tool(
+  "move_layers",
+  "Move layers into another artboard or frame (to: its id; left/top: where inside it), or out onto the canvas next to the artboards (to: \"canvas\"; x/y: canvas position). Layers on the canvas are kept in the project but not exported: a scratch area for spare pieces. One undo step.",
+  { moves: z.array(z.object({ nodeId: z.string(), to: z.string(), left: z.number().optional(), top: z.number().optional(), x: z.number().optional(), y: z.number().optional() })).min(1) },
+  async (a) => text({ moved: await op("relocate", { moves: a.moves }) })
 );
 tool("set_hidden", "Hide or show layers (hidden layers are left out of exports).", { nodeIds: ids, hidden: z.boolean() }, async (a) => text((await op("setHidden", { nodeIds: a.nodeIds, hidden: a.hidden })) ?? "ok"));
 tool("set_locked", "Lock layers so they can't be selected or moved on the canvas by accident (e.g. a background), or unlock them.", { nodeIds: ids, locked: z.boolean() }, async (a) => text({ locked: a.locked, nodeIds: await op("setLocked", { nodeIds: a.nodeIds, locked: a.locked }) }));

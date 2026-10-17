@@ -26,6 +26,44 @@ export function installExtras(Doc) {
   const plain = (n) => { delete n.component; delete n.instanceOf; delete n.overrides; delete n.variant; (n.children || []).forEach(plain); };
   P.rightEdge = function () { return this.state.artboards.reduce((m, a) => Math.max(m, (a.x || 0) + (px(a.style.width) || 600)), 0); };
 
+  // ---------- layers outside artboards ----------
+  // Layers can sit on the canvas itself, outside every artboard: kept in the project, never exported. They live at the top level
+  // next to the artboards (free: true, x / y on the canvas) and can be moved back into any artboard or frame.
+  P.boards = function () { return this.state.artboards.filter((a) => !a.free); };
+  P.relocate = function ({ moves = [], updates = [] }) {
+    const before = this.snapshot();
+    if (updates.length) this.applyStyles(updates);
+    const px = (v) => Math.round(v * 10) / 10 + "px";
+    const PLACE_KEYS = ["left", "top", "right", "bottom", "margin", "margin-top", "margin-right", "margin-bottom", "margin-left", "align-self", "flex", "flex-grow", "flex-shrink", "flex-basis", "order"];
+    for (const m of moves) {
+      const r = this.need(m.nodeId), n = r.node;
+      if (n.artboard) throw new Error("Artboards already sit on the canvas: move them with update_styles left/top.");
+      const into = m.to && m.to !== "canvas" ? this.need(m.to).node : null;
+      if (into && (into === n || this.find(m.to, n.children || []))) throw new Error("Cannot move a layer into itself.");
+      if (into && (into.tag === "img" || into.tag === "svg" || into.tag === "#text")) throw new Error("Move layers into an artboard or a frame.");
+      this.detachInstanceOf(m.nodeId);
+      if (into) this.detachInstanceOf(m.to, { includeRoot: true });
+      r.list.splice(r.index, 1);
+      n.style = n.style || {};
+      for (const k of PLACE_KEYS) delete n.style[k];
+      if (m.width != null) n.style.width = px(m.width);
+      if (m.height != null) n.style.height = px(m.height);
+      if (!into) {
+        n.free = true; n.x = Math.round(Number(m.x) || 0); n.y = Math.round(Number(m.y) || 0);
+        Object.assign(n.style, { position: "absolute", left: "0px", top: "0px" });
+        this.state.artboards.push(n);
+      } else {
+        delete n.free; delete n.x; delete n.y;
+        Object.assign(n.style, { position: "absolute", left: px(Number(m.left) || 0), top: px(Number(m.top) || 0) });
+        if (!into.style.position || into.style.position === "static") into.style.position = "relative";
+        into.children = into.children || [];
+        into.children.push(n);
+      }
+    }
+    this.commit(before);
+    return moves.map((m) => m.nodeId);
+  };
+
   // ---------- links ----------
   P.setLink = function ({ nodeId, href }) {
     const before = this.snapshot();

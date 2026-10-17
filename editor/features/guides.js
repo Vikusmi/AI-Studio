@@ -28,12 +28,12 @@ export function initGuides(ctx) {
     if (a) return a;
     const v = vr(), cx = v.left + v.width / 2, cy = v.top + v.height / 2;
     let best = null, bd = Infinity;
-    for (const ab of ctx.state.artboards) {
+    for (const ab of ctx.boards()) {
       const r = abRect(ab.id); if (!r) continue;
       const d = Math.hypot(Math.max(r.left - cx, 0, cx - r.right), Math.max(r.top - cy, 0, cy - r.bottom));
       if (d < bd) { bd = d; best = ab; }
     }
-    return best || ctx.state.artboards[0] || null;
+    return best || ctx.boards()[0] || null;
   }
 
   // ---------- drawing ----------
@@ -89,7 +89,7 @@ export function initGuides(ctx) {
     const v = vr(), W = v.width, H = v.height, z = view().z;
     const g = size(cg, W, H);
     // layout grid
-    for (const ab of ctx.state.artboards) {
+    for (const ab of ctx.boards()) {
       const gr = ab.grid; if (!gr || !gr.show) continue;
       const r = abRect(ab.id); if (!r) continue;
       const s = gr.size || 8; if (s * z < 3.5) continue;

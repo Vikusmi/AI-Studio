@@ -18,7 +18,7 @@ export const PROJECT_OPS = new Set([
 const LABEL = {
   createArtboard: "Creating an artboard", insert: "Adding layers", updateStyles: "Changing styles", setAttrs: "Updating a layer", setText: "Rewriting text",
   setInner: "Rewriting text", rename: "Renaming layers", remove: "Removing layers", duplicate: "Duplicating", move: "Moving layers", reorder: "Changing layer order",
-  group: "Grouping layers", ungroup: "Ungrouping", splitText: "Separating text", setHidden: "Hiding or showing", setLocked: "Locking layers", setLink: "Setting a link",
+  group: "Grouping layers", relocate: "Moving layers", ungroup: "Ungrouping", splitText: "Separating text", setHidden: "Hiding or showing", setLocked: "Locking layers", setLink: "Setting a link",
   applyStyle: "Applying a style", createStyle: "Creating a style", updateStyle: "Changing a style", createComponent: "Making a component", createInstance: "Adding an instance",
   detachInstance: "Detaching an instance", setBrand: "Updating the brand kit", placeImage: "Placing an image", insertIcon: "Adding an icon", resizeArtboard: "Resizing to new formats",
   makeVariants: "Making variations", pickVariant: "Picking a variation", discardVariants: "Discarding variations", useTemplate: "Adding a template", setAutoLayout: "Changing auto layout",

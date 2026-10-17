@@ -639,3 +639,6 @@ button.icon:hover{color:var(--orange)}
 .tcard.sel{border-color:var(--orange)}
 .hero{background:radial-gradient(900px 400px at 100% 0%,rgba(255,79,31,.18),transparent 60%),#161616}
 .try:hover b{color:#fff}
+
+/* layers on the canvas, outside every artboard */
+.abw.free>[data-id]{box-shadow:none;overflow:visible;outline:1px dashed color-mix(in srgb,var(--orange) 55%,transparent);outline-offset:3px}

@@ -80,6 +80,8 @@ function find(id, list = state.artboards, parent = null) {
   return null;
 }
 const nodeOf = (id) => find(id)?.node;
+// the artboards themselves (layers can also sit on the canvas outside any artboard: free, kept, never exported)
+const boards = () => state.artboards.filter((a) => !a.free);
 function artboardOf(id) {
   for (const ab of state.artboards) if (ab.id === id || find(id, ab.children || [])) return ab;
   return null;
@@ -136,7 +138,7 @@ function renderWorld(partial = false) {
     let c = abCache.get(ab.id);
     if (!c || c.key !== key) {
       const w = document.createElement("div");
-      w.className = "abw";
+      w.className = "abw" + (ab.free ? " free" : "");
       w.dataset.abw = ab.id;
       w.style.left = ab.x + "px";
       w.style.top = ab.y + "px";
@@ -150,6 +152,23 @@ function renderWorld(partial = false) {
   }
   for (const [id, c] of abCache) if (!seen.has(id)) { c.wrap.remove(); abCache.delete(id); }
   $("#empty").hidden = state.artboards.length > 0;
+}
+// the artboard under a point on screen (the one in front when they overlap)
+function boardAt(x, y) {
+  const list = boards();
+  for (let i = list.length - 1; i >= 0; i--) { const el = elFor(list[i].id); if (!el) continue; const r = el.getBoundingClientRect(); if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return list[i]; }
+  return null;
+}
+// where a dragged layer lands: its own artboard (nothing special), another artboard, or the canvas itself
+function landing(id, el) {
+  const r = el.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2, z = view.z, n = nodeOf(id);
+  const own = n && n.free ? null : artboardOf(id), to = boardAt(cx, cy);
+  if (to && own && to.id === own.id) return null;
+  if (!to && n && n.free) return null;
+  const w = el.offsetWidth, h = el.offsetHeight, size = { width: w, ...(n && isTextLeaf(n) && !/px/.test(n.style.height || "") ? {} : { height: h }) };
+  if (!to) { const vr = viewport.getBoundingClientRect(); return { nodeId: id, to: "canvas", x: (cx - vr.left - view.x) / z - w / 2, y: (cy - vr.top - view.y) / z - h / 2, ...size }; }
+  const tr = elFor(to.id).getBoundingClientRect(), tcs = getComputedStyle(elFor(to.id));
+  return { nodeId: id, to: to.id, left: (cx - tr.left) / z - w / 2 - (parseFloat(tcs.borderLeftWidth) || 0), top: (cy - tr.top) / z - h / 2 - (parseFloat(tcs.borderTopWidth) || 0), ...size };
 }
 // single-weight display fonts need a bare family name; variable ones get their weight range (and italics where they have them)
 const SINGLE = new Set(["Anton", "Bebas Neue", "Bowlby One", "Caprasimo", "Lobster", "Pacifico", "Titan One", "Chewy", "Dela Gothic One", "Rubik Mono One", "Shrikhand", "Paytone One", "Bagel Fat One", "Gloock", "Instrument Serif", "DM Serif Display", "Abril Fatface", "Righteous", "Permanent Marker"]);
@@ -268,7 +287,7 @@ function drawOverlay() {
   [...overlay.children].forEach((c) => c.classList.contains("ab-title") || c.remove());
   const rect = (el) => { const r = el.getBoundingClientRect(); return { x: r.left - vr.left, y: r.top - vr.top, w: r.width, h: r.height }; };
   const live = new Set();
-  for (const ab of state.artboards) {
+  for (const ab of boards()) {
     const el = elFor(ab.id);
     if (!el) continue;
     live.add(ab.id);
@@ -299,14 +318,14 @@ function drawOverlay() {
     if (selection.length === 1 && !drag?.indicator && !n.locked) {
       const abs = n.style && n.style.position === "absolute";
       // the whole blue edge is grabbable, not just the dots
-      for (const h of n.artboard ? ["e", "s"] : ["n", "s", "e", "w"]) {
+      for (const h of n.artboard || n.free ? ["e", "s"] : ["n", "s", "e", "w"]) {
         const d = document.createElement("div"), T = 8;
         d.className = "edge"; d.dataset.h = h;
         if (h === "n" || h === "s") Object.assign(d.style, { left: r.x + "px", top: (h === "n" ? r.y : r.y + r.h) - T / 2 + "px", width: r.w + "px", height: T + "px", cursor: "ns-resize" });
         else Object.assign(d.style, { top: r.y + "px", left: (h === "w" ? r.x : r.x + r.w) - T / 2 + "px", height: r.h + "px", width: T + "px", cursor: "ew-resize" });
         overlay.appendChild(d);
       }
-      for (const h of n.artboard ? ["e", "s", "se"] : ["n", "s", "e", "w", "ne", "nw", "se", "sw"]) {
+      for (const h of n.artboard || n.free ? ["e", "s", "se"] : ["n", "s", "e", "w", "ne", "nw", "se", "sw"]) {
         const d = document.createElement("div");
         d.className = "handle"; d.dataset.h = h;
         d.style.left = (h.includes("w") ? r.x : h.includes("e") ? r.x + r.w : r.x + r.w / 2) + "px";
@@ -434,6 +453,7 @@ viewport.addEventListener("pointerdown", (e) => {
   else if (!selection.includes(id)) select([id]);
   const n = nodeOf(id);
   if (n.locked) return;
+  if (n.free) { drag = { kind: "artboard", free: true, id, sx: e.clientX, sy: e.clientY, ox: n.x, oy: n.y, moved: false, wrap: world.querySelector(`[data-abw="${id}"]`) }; return; }
   // pressing on an artboard's background: box-select inside it
   if (n.artboard) { drag = { kind: "marquee", scope: id, base: e.shiftKey ? [...selection] : [], sx: e.clientX, sy: e.clientY, moved: false }; return; }
   // a layer inside an auto-layout frame is reordered, not freely placed (the frame keeps laying its children out)
@@ -706,6 +726,9 @@ function startMove() {
   drag.rects = sibs.filter((c) => getComputedStyle(c).display !== "none").map((c) => { const b = c.getBoundingClientRect(); return { l: b.left, t: b.top, r: b.right, b: b.bottom }; });
   // the artboard's own guides are snap targets too
   drag.abId = artboardOf(drag.id)?.id;
+  // a layer dragged past the artboard's edge stays visible (it may land on the canvas or on another artboard)
+  const abEl = drag.abId && elFor(drag.abId);
+  if (abEl) { abEl.style.overflow = "visible"; abEl.parentElement.style.zIndex = "5"; drag.unclip = () => { abEl.style.overflow = ""; abEl.parentElement.style.zIndex = ""; }; }
   if (guides && drag.abId) { const g = guides.guideTargets(drag.abId); drag.tx.push(...g.x); drag.ty.push(...g.y); }
 }
 function startResize() {
@@ -736,11 +759,21 @@ viewport.addEventListener("pointerup", async (e) => {
     if (d.moved && d.pos) await op("updateStyles", { updates: [{ nodeIds: [d.id], styles: { "object-position": d.pos } }] });
     return;
   }
-  if (d.kind === "artboard" && d.moved) await op("moveArtboard", { nodeId: d.id, x: d.nx, y: d.ny });
+  if (d.kind === "artboard" && d.moved) {
+    // a free layer dropped onto an artboard goes into it
+    const m = d.free && landing(d.id, elFor(d.id));
+    if (m) { try { await op("relocate", { moves: [m] }); } catch {} } else await op("moveArtboard", { nodeId: d.id, x: d.nx, y: d.ny });
+  }
   else if (d.kind === "move" && d.moved && d.final) {
-    // the pins (neighbours + the moved layers) and the final spots go to the server as one undo step
+    // the pins (neighbours + the moved layers) and the final spots go to the server as one undo step;
+    // layers dropped outside their artboard move to another artboard or onto the canvas
     drawOverlay();
-    try { await op("updateStyles", { updates: [...(d.pins || []), ...d.final] }); } catch (err) { toast(err.message); }
+    const moves = d.items.map((it) => landing(it.id, it.el)).filter(Boolean);
+    if (d.unclip) d.unclip();
+    try {
+      if (moves.length) { await op("relocate", { updates: [...(d.pins || []), ...d.final.filter((f) => !moves.some((m) => m.nodeId === f.nodeIds[0]))], moves }); if (moves.some((m) => m.to === "canvas")) toast("On the canvas: kept in the project, not exported. Drag it onto an artboard to use it."); }
+      else await op("updateStyles", { updates: [...(d.pins || []), ...d.final] });
+    } catch (err) { toast(err.message); }
     if (pendingRefresh) { pendingRefresh = false; refresh(); }
   } else if (d.kind === "resize" && d.moved && d.styles) {
     try { await op("updateStyles", { updates: [...(d.pins || []), { nodeIds: [d.id], styles: d.styles }] }); } catch (err) { toast(err.message); }
@@ -776,6 +809,7 @@ viewport.addEventListener("pointercancel", () => {
   const d = drag; drag = null;
   viewport.classList.remove("panning");
   if (d && d.kind === "reorder") reorderEnd(d, true);
+  if (d && d.unclip) d.unclip();
   if (d && d.moved && (d.kind === "move" || d.kind === "resize" || d.kind === "artboard" || d.kind === "rotate")) refresh();
   drawOverlay();
 });
@@ -899,9 +933,9 @@ addEventListener("keydown", (e) => {
   else if (e.key === "ArrowUp" && e.altKey && selection.length) { const r = find(selection[0]); if (r && r.parent) select([r.parent.id]); }
   else if (e.key.startsWith("Arrow") && selection.length) {
     const step = e.shiftKey ? 10 : 1, dx = { ArrowLeft: -step, ArrowRight: step }[e.key] || 0, dy = { ArrowUp: -step, ArrowDown: step }[e.key] || 0;
-    let ids = selection.filter((id) => nodeOf(id) && !nodeOf(id).artboard && !nodeOf(id).locked && elFor(id));
+    let ids = selection.filter((id) => nodeOf(id) && !nodeOf(id).artboard && !nodeOf(id).free && !nodeOf(id).locked && elFor(id));
     if (ids.some(inAuto)) { ids = ids.filter((id) => !inAuto(id)); toast("Layers in an auto-layout frame are positioned by the frame (gap, padding, alignment)."); }
-    for (const id of selection) { const n = nodeOf(id); if (n && n.artboard) { op("moveArtboard", { nodeId: id, x: n.x + dx, y: n.y + dy }); e.preventDefault(); } }
+    for (const id of selection) { const n = nodeOf(id); if (n && (n.artboard || n.free)) { op("moveArtboard", { nodeId: id, x: n.x + dx, y: n.y + dy }); e.preventDefault(); } }
     if (!ids.length) return;
     e.preventDefault();
     const plan = pinPlan(ids.filter((id) => !["absolute", "fixed"].includes(getComputedStyle(elFor(id)).position)));
@@ -942,7 +976,7 @@ setTool("select"); setSnap(snapOn);
 
 // align the selection to its parent (one element) or to each other (several); distribute needs three
 async function alignSel(kind) {
-  const items = selection.map((id) => ({ id, n: nodeOf(id), el: elFor(id) })).filter((it) => it.n && it.el && !it.n.artboard);
+  const items = selection.map((id) => ({ id, n: nodeOf(id), el: elFor(id) })).filter((it) => it.n && it.el && !it.n.artboard && !it.n.free);
   if (!items.length) return;
   if (items.some((it) => inAuto(it.id))) return toast("These layers sit in an auto-layout frame: use its gap, padding and alignment to position them.");
   const z = view.z;
@@ -1011,7 +1045,8 @@ function insertTarget() {
     const r = find(id);
     if (r && r.parent) return r.parent.id;
   }
-  return state.artboards.length ? state.artboards[state.artboards.length - 1].id : null;
+  const bs = boards();
+  return bs.length ? bs[bs.length - 1].id : null;
 }
 async function insertHtml(html) {
   const t = insertTarget();
@@ -1175,8 +1210,8 @@ async function pasteNodes(nodes, parents) {
 
 // ---------- present: artboards as full-screen slides ----------
 function present() {
-  if (!state.artboards.length) return toast("No artboard yet.");
-  const order = [...state.artboards].sort((a, b) => a.y - b.y || a.x - b.x);
+  if (!boards().length) return toast("No artboard yet.");
+  const order = [...boards()].sort((a, b) => a.y - b.y || a.x - b.x);
   const start = selection.length ? order.findIndex((a) => a.id === artboardOf(selection[0])?.id) : 0;
   let i = Math.max(0, start);
   const box = document.createElement("div"); box.id = "present";
@@ -1226,8 +1261,8 @@ $("#btn-fit").onclick = () => fit();
 $("#btn-present").onclick = () => present();
 $("#btn-add-image").onclick = () => pickImage(async (src) => insertHtml(`<img src="${src}" style="width:100%;height:auto;display:block">`));
 function currentArtboard() {
-  if (selection.length) { const a = artboardOf(selection[0]); if (a) return a; }
-  return state.artboards[0];
+  if (selection.length) { const a = artboardOf(selection[0]); if (a && !a.free) return a; }
+  return boards()[0];
 }
 $("#btn-html").onclick = () => { const a = currentArtboard(); if (!a) return toast("No artboard yet."); location.href = `/api/export?id=${a.id}`; };
 const exportEmail = (fmt, extra = "") => { const a = currentArtboard(); if (!a) return toast("No artboard yet."); location.href = `/api/export?id=${a.id}&format=${fmt}${extra}`; };
@@ -1300,6 +1335,7 @@ function spotIn(el, par) {
 async function groupSel() {
   const items = selection.map((id) => ({ id, n: nodeOf(id), el: elFor(id) })).filter((it) => it.n && it.el && !it.n.artboard);
   if (!items.length) return toast("Select layers to group.");
+  if (items.some((it) => it.n.free)) return toast("Drag these layers onto an artboard to group them.");
   const par = items[0].el.parentElement;
   if (items.some((it) => it.el.parentElement !== par)) return toast("Select layers that share the same frame to group them.");
   const plan = pinPlan(items.filter((it) => isFlowEl(it.el)).map((it) => it.id));
@@ -1432,13 +1468,13 @@ try { pvKind = localStorage.getItem("studio-pv-kind") || "design"; pvMode = loca
 function closePreview() { pv.hidden = true; pv.innerHTML = ""; }
 const abWidth = () => { const a = nodeOf(pvId); return parseInt(a?.style?.width, 10) || 600; };
 async function openPreview(id) {
-  if (!state.artboards.length) return toast("No artboard yet.");
-  pvId = id || currentArtboard()?.id || state.artboards[0].id;
+  if (!boards().length) return toast("No artboard yet.");
+  pvId = id || currentArtboard()?.id || boards()[0].id;
   pv.hidden = false;
   pv.innerHTML = `
     <div class="pv-top">
       <div class="pv-title">Preview</div>
-      <select id="pv-ab" title="Which artboard to preview">${state.artboards.map((a) => `<option value="${a.id}" ${a.id === pvId ? "selected" : ""}>${esc(a.name || "Artboard")}</option>`).join("")}</select>
+      <select id="pv-ab" title="Which artboard to preview">${boards().map((a) => `<option value="${a.id}" ${a.id === pvId ? "selected" : ""}>${esc(a.name || "Artboard")}</option>`).join("")}</select>
       <div class="seg small" title="Device"><button data-pvm="desktop">Desktop</button><button data-pvm="mobile">Mobile</button></div>
       <div class="seg small" title="Design: exactly as you drew it. Email-safe: what Gmail and Outlook can show"><button data-pvk="design">Design</button><button data-pvk="email">Email-safe</button></div>
       <div class="spacer"></div>
@@ -2147,7 +2183,7 @@ const ectx = {
   $, op, toast, esc, FONTS, pop, es,
   get state() { return state; }, get selection() { return selection; },
   select, nodeOf, find, elFor, insertTarget, insertHtml, pickImage, openMenu, confirmBox, fit, drawOverlay, isTextLeaf, isContainer, view: () => view,
-  world, setTool, artboardOf, currentArtboard, viewport, overlay, label, upload, PRESETS, linkOf,
+  world, setTool, artboardOf, currentArtboard, boards, viewport, overlay, label, upload, PRESETS, linkOf,
   onOverlay: (fn) => overlayHooks.push(fn), reveal,
   get drag() { return drag; }, get editing() { return editing; }, get cropping() { return cropping; }, get project() { return project; },
   openProjectId: (id) => openProjectId(id), goHome: () => goHome(),

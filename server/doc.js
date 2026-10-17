@@ -252,7 +252,7 @@ export class Doc {
         const { node } = this.need(id);
         const ctx = node.artboard ? null : this.instanceCtx(id);
         for (const [k, v] of Object.entries(styles)) {
-          if (node.artboard && (k === "left" || k === "top")) {
+          if ((node.artboard || node.free) && (k === "left" || k === "top")) {
             node[k === "left" ? "x" : "y"] = parseFloat(v) || 0;
             continue;
           }
@@ -330,6 +330,7 @@ export class Doc {
       c.x += offsetX;
       c.name = (c.name || "Artboard") + " copy";
     }
+    if (c.free) { c.x += 24; c.y += 24; }
     return c;
   }
   duplicate(ids) {
@@ -354,6 +355,7 @@ export class Doc {
     this.detachInstanceOf(nodeId); this.detachInstanceOf(parentId, { includeRoot: true });
     if (r.node.artboard) throw new Error("Artboards can't be nested. Use update_styles left/top to move one on the canvas.");
     r.list.splice(r.index, 1);
+    if (r.node.free) { delete r.node.free; delete r.node.x; delete r.node.y; }
     p.children = p.children || [];
     const at = index === undefined ? p.children.length : Math.min(index, p.children.length);
     p.children.splice(at, 0, r.node);
