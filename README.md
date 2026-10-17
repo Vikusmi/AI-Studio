@@ -124,43 +124,79 @@ guides, auto layout, presets for every common format, version history, and expor
 
 ---
 
-## Get started
+## Installation
 
-**Needs:** macOS, [Node.js](https://nodejs.org) 20+, Google Chrome (for screenshots and image export), and
-[Claude Code](https://claude.com/claude-code) for the AI side.
+### What you need
+
+- A Mac
+- [Node.js](https://nodejs.org) 20 or newer
+- [Google Chrome](https://www.google.com/chrome/)
+- [Claude Code](https://claude.com/claude-code), to design with Claude
+
+### 1. Download and install
+
+Open Terminal and run:
 
 ```bash
 git clone https://github.com/Vikusmi/AI-Studio.git
 cd AI-Studio
 npm install
-npm start            # http://127.0.0.1:4777
 ```
 
-### Connect Claude Code
+### 2. Connect Claude
+
+Still in the `AI-Studio` folder, run:
 
 ```bash
 claude mcp add ai-studio -- node "$(pwd)/server/mcp.js"
 ```
 
-That's it: start a Claude Code chat and ask it to design something in Studio. The MCP server starts the app server by itself, so
-`npm start` is optional once Claude is connected. The home screen shows whether Claude is connected, with prompt ideas to copy.
+You only do this once.
 
-### The Mac app
+### 3. Start Studio
 
 ```bash
-npm run make-app     # → ~/Applications/Studio.app
+npm start
 ```
 
-A native window (Swift + WebKit) with its own Dock icon and menu bar. Exports open a Save dialog, images a file picker. It bundles a
-copy of the code and offers to rebuild when the code changes. Needs the Xcode Command Line Tools (`xcode-select --install`); without
-the Swift compiler it falls back to a Chrome app window.
+Open **http://127.0.0.1:4777** in your browser.
 
-### Where things live
+### 4. Design
 
-Projects are folders in `~/Library/Application Support/Studio/projects/` (`doc.json`, `assets/`, `meta.json`, `notes.json`,
-`history/`); the Mac app, `npm start` and Claude share them. Templates are in `projects/.templates`, the trash in `projects/.trash`,
-backups in `~/Library/Application Support/Studio/Backups` unless you pick another folder in Settings.
-Environment: `STUDIO_PROJECTS=/path` (another folder), `STUDIO_PORT=4800`, `CHROME_PATH=/path/to/chrome`.
+Open a Claude Code chat and ask, for example:
+
+> Create a 1080×1080 Instagram post in Studio announcing our summer sale.
+
+Watch it appear in Studio. When Claude is connected, Studio starts by itself, so after the first time you can skip step 3.
+
+### Optional: the Mac app
+
+```bash
+npm run make-app
+```
+
+This puts **Studio** in `~/Applications`, with its own window and Dock icon. If macOS asks for developer tools, run
+`xcode-select --install` first.
+
+### Updating
+
+```bash
+cd AI-Studio
+git pull
+npm install
+```
+
+If you use the Mac app, run `npm run make-app` again afterwards.
+
+<details>
+<summary>Where your files are, and settings</summary>
+
+Projects are saved in `~/Library/Application Support/Studio/projects/`, one folder per project. The Mac app, the browser and
+Claude all use the same projects. Backups go to `~/Library/Application Support/Studio/Backups` (change it in Settings).
+
+Optional settings: `STUDIO_PORT=4800 npm start` (another port), `STUDIO_PROJECTS=/path npm start` (another projects folder),
+`CHROME_PATH=/path/to/chrome` (a different Chrome).
+</details>
 
 ---
 
